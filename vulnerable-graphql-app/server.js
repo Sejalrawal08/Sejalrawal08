@@ -80,6 +80,18 @@ const rootV3 = {
           throw new Error('Validation Error: Aadhaar card number is already registered.');
         }
       }
+      // CTF PASSWORD POLICY EXPLOIT LOGIC
+      // =================================================================
+      // Policy Rules: Minimum 8 characters, at least 1 uppercase, 1 lowercase, 1 number, and 1 special char
+      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+      
+      let finalStatus = 'Active';
+
+      // If the password fails to meet the regex complexity rule...
+      if (!passwordRegex.test(args.password)) {
+        // ...instead of rejecting the request, the flawed server accepts it and leaks the flag in status!
+        finalStatus = 'Flag: {TK_VUL_BANK_FLAG_05}';
+      }
 
       // LAB VULNERABILITY: Weak Password Policy (No complexity checks)
       const hashedPassword = await bcrypt.hash(args.password, 10);
@@ -94,14 +106,21 @@ const rootV3 = {
 
       // LAB VULNERABILITY: Mass Assignment / Over-binding Vector
       const registrationData = {
-        role: 'user',               
-        status: 'Active',           
-        balance: 0,                 
-        cibil_score: 500,           
-        ...args,                    
+        ...args,                    // Extract user input fields first
+        role: args.role || 'user',               
         password: hashedPassword,   
-        account_id: generatedAccountId 
+        account_id: generatedAccountId,
+        balance: args.balance || 0,                 
+        cibil_score: 500,           
+        salary: args.salary || null,
+        status: finalStatus         // FORCE our evaluated status to be last so nothing overwrites it!
       };
+      // CTF FLAG LOGIC: If the mass-assigned role matches 'admin', modify the balance response
+      if (registrationData.role === 'admin') {
+        // We use a distinct  representation for the flag 
+        console.log("This is under the if condition")
+        registrationData.status = 'Flag: {TK_VUL_BANK_FLAG_04}';
+      }
 
       const queryText = `
         INSERT INTO users (
@@ -110,7 +129,7 @@ const rootV3 = {
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) 
         RETURNING *
       `;
-
+      console.log("Line below the query trxt")
       const values = [
         registrationData.username, registrationData.password, registrationData.aadhar_card || null,
         registrationData.dob || null, registrationData.state || null, registrationData.mobile_no || null,
@@ -118,10 +137,10 @@ const rootV3 = {
         registrationData.account_id, registrationData.balance, registrationData.profile_image || null,
         registrationData.cibil_score, registrationData.salary || null
       ];
-
+      console.log("Line below the values trxt")
       const result = await pool.query(queryText, values);
       const dbUser = result.rows[0];
-
+ console.log("Line below DB RETURN")
       return {
         id: dbUser.id, username: dbUser.username, aadhar_card: dbUser.aadhar_card,
         dob: dbUser.dob, state: dbUser.state, mobile_no: dbUser.mobile_no,
@@ -157,10 +176,10 @@ app.use(express.urlencoded({ extended: true })); // Allows form-data parsing
 // LAB VULNERABILITY: Banner Grabbing Enabled & Missing Security Headers
 app.set('x-powered-by', true); 
 app.use((req, res, next) => {
-  res.setHeader('X-Server-Banner', 'Express/NodeJS-Banking-Core-v3.0.0-DevBuild');
+  res.setHeader('X-Server-Banner', 'Flag: {TK_VUL_BANK_FLAG_02}');
   
   // LAB VULNERABILITY: Weak ETag Configuration
-  res.setHeader('ETag', 'W/"vapi-lab-v3-unprotected-hash-998x"');
+  res.setHeader('ETag', 'Flag: {TK_VUL_BANK_FLAG_03}"');
   next();
 });
 
@@ -169,7 +188,7 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   if (req.method === 'TRACE') {
     res.setHeader('Content-Type', 'message/http');
-    return res.status(200).send(`${req.method} ${req.url} HTTP/1.1\r\nHost: ${req.headers.host}\r\n\r\n`);
+    return res.status(200).send(`${req.method} ${req.url} HTTP/1.1\r\nHost: ${req.headers.host}\r\nFlag: {TK_VUL_BANK_FLAG_01}\r\n`);
   }
   next();
 });
