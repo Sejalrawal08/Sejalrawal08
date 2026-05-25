@@ -2,11 +2,14 @@ const express = require('express');
 const { graphqlHTTP } = require('express-graphql');
 const { buildSchema } = require('graphql');
 const bcrypt = require('bcryptjs');
-const { exec } = require('child_process'); // Node framework built-in to execute OS commands
+const { exec } = require('child_process');
 const pool = require('./db');
 
-// 1. Define the GraphQL Schema based on your exact specifications
-const schema = buildSchema(`
+// ==========================================
+// V3 SCHEMA & RESOLVER CONFIGURATION
+// ==========================================
+
+const schemaV3 = buildSchema(`
   type User {
     id: ID!
     username: String!
@@ -27,15 +30,15 @@ const schema = buildSchema(`
   type Mutation {
     registerUser(
       username: String!, 
-      password: String!, # Intentionally accepting weak passwords (no policy checking)
+      password: String!, 
       aadhar_card: String,
       dob: String,
       state: String,
       mobile_no: String,
-      email: String,      # OS Command Injection Vector
-      role: String,       # Mass Assignment Vector
-      status: String,     # Mass Assignment Vector
-      balance: Float,     # Mass Assignment Vector
+      email: String,      
+      role: String,       
+      status: String,     
+      balance: Float,     
       profile_image: String,
       cibil_score: Int,
       salary: Float
@@ -47,67 +50,59 @@ const schema = buildSchema(`
   }
 `);
 
-// 2. Vulnerable Resolver Core Logic
-const root = {
+const rootV3 = {
   registerUser: async (args) => {
     try {
-      // 1. Validate Username Uniqueness
+      // LAB VULNERABILITY: Username Enumeration / Helpful Error Messages
       const usernameCheck = await pool.query('SELECT id FROM users WHERE username = $1', [args.username]);
       if (usernameCheck.rows.length > 0) {
         throw new Error('Validation Error: Username is already taken.');
       }
-  
 
-      // Vulnerability 2: OS Command Injection
-      // Simulates sending a confirmation/welcome text via a system command tool using the input email string directly
       if (args.email) {
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        // Strip out common command injection characters for standard validation, 
-        // but note: to preserve your intentional injection lab vector, you can comment this format check out!
-        if (!emailRegex.test(args.email)) {
-          throw new Error('Validation Error: Invalid email format.');
-        }
         const emailCheck = await pool.query('SELECT id FROM users WHERE email = $1', [args.email]);
         if (emailCheck.rows.length > 0) {
           throw new Error('Validation Error: Email is already registered.');
         }
       }
-      // 3. Validate Mobile Number Length (Must be exactly 10 digits)
+
       if (args.mobile_no) {
-        const cleanMobile = args.mobile_no.replace(/\D/g, ''); // Strip non-numeric characters if any
+        const cleanMobile = args.mobile_no.replace(/\D/g, ''); 
         if (cleanMobile.length !== 10) {
           throw new Error('Validation Error: Mobile number must be exactly 10 digits long.');
         }
       }
-      // 4. Validate Aadhaar Card Length (Must be exactly 12 digits)
+
+      // Aadhaar uniqueness check (length validation removed per requirements)
       if (args.aadhar_card) {
-        // Strip out any accidental spaces or hyphens the user typed
-        const cleanAadhar = args.aadhar_card.replace(/\D/g, ''); 
-        if (cleanAadhar.length !== 12) {
-          throw new Error('Validation Error: Aadhaar card number must be exactly 12 digits long.');
+        const aadharCheck = await pool.query('SELECT id FROM users WHERE aadhar_card = $1', [args.aadhar_card]);
+        if (aadharCheck.rows.length > 0) {
+          throw new Error('Validation Error: Aadhaar card number is already registered.');
         }
       }
-      // --- Rest of your existing logic (Hashing, Intentional Vulnerabilities, SQL Query) ---
+
+      // LAB VULNERABILITY: Weak Password Policy (No complexity checks)
       const hashedPassword = await bcrypt.hash(args.password, 10);
-      // Intentional OS Command Injection Lab Vector (kept for your testing)
+
       if (args.email) {
         exec(`echo "Sending registration ping to: ${args.email}"`, (error, stdout, stderr) => {
           if (stdout) console.log(`Shell Output:\n${stdout}`);
         });
       }
 
-
-
-      // Automatically handle internal setup properties
       const generatedAccountId = 'ACC-' + Math.floor(100000 + Math.random() * 900000);
 
-      // Vulnerability 3: Mass Assignment (Over-binding validation)
-      // The application blindly processes client parameters for fields that should be server-assigned
-      const userRole = args.role || 'User'; 
-      const userStatus = args.status || 'Active';
-      const userBalance = args.balance !== undefined ? args.balance : 0;
+      // LAB VULNERABILITY: Mass Assignment / Over-binding Vector
+      const registrationData = {
+        role: 'user',               
+        status: 'Active',           
+        balance: 0,                 
+        cibil_score: 500,           
+        ...args,                    
+        password: hashedPassword,   
+        account_id: generatedAccountId 
+      };
 
-      // PostgreSQL insertion string execution
       const queryText = `
         INSERT INTO users (
           username, password, aadhar_card, dob, state, mobile_no, email, 
@@ -117,28 +112,28 @@ const root = {
       `;
 
       const values = [
-        args.username,
-        hashedPassword,
-        args.aadhar_card || null,
-        args.dob || null,          // Expecting format string 'YYYY-MM-DD'
-        args.state || null,
-        args.mobile_no || null,
-        args.email || null,
-        userRole,
-        userStatus,
-        generatedAccountId,
-        userBalance,
-        args.profile_image || null,
-        args.cibil_score || null,
-        args.salary || null
+        registrationData.username, registrationData.password, registrationData.aadhar_card || null,
+        registrationData.dob || null, registrationData.state || null, registrationData.mobile_no || null,
+        registrationData.email || null, registrationData.role, registrationData.status,
+        registrationData.account_id, registrationData.balance, registrationData.profile_image || null,
+        registrationData.cibil_score, registrationData.salary || null
       ];
 
       const result = await pool.query(queryText, values);
-      return result.rows[0];
+      const dbUser = result.rows[0];
+
+      return {
+        id: dbUser.id, username: dbUser.username, aadhar_card: dbUser.aadhar_card,
+        dob: dbUser.dob, state: dbUser.state, mobile_no: dbUser.mobile_no,
+        email: dbUser.email, role: dbUser.role, status: dbUser.status,
+        account_id: dbUser.account_id, balance: parseFloat(dbUser.balance), 
+        profile_image: dbUser.profile_image, cibil_score: dbUser.cibil_score,     
+        salary: dbUser.salary ? parseFloat(dbUser.salary) : null
+      };
 
     } catch (err) {
-      console.error(err);
-      throw new Error('Registration failed processing due to internal error.');
+      // LAB VULNERABILITY: Verbose Internal Error Output
+      throw new Error(`Database Debug Trace Error: ${'Registration failed processing due to internal error.'}`);
     }
   },
 
@@ -148,14 +143,53 @@ const root = {
   }
 };
 
-// 3. App Mounting Setup
+// ==========================================
+// EXPRESS INFRASTRUCTURE MOUNTING
+// ==========================================
+
 const app = express();
-app.use('/graphql', graphqlHTTP({
-  schema: schema,
-  rootValue: root,
-  graphiql: true, // Interactive client playground console
+// ==========================================
+// BODY PARSING MIDDLEWARE (CRITICAL FIX FOR 404)
+// ==========================================
+app.use(express.json()); // Allows Express to read raw JSON payloads
+app.use(express.urlencoded({ extended: true })); // Allows form-data parsing
+
+// LAB VULNERABILITY: Banner Grabbing Enabled & Missing Security Headers
+app.set('x-powered-by', true); 
+app.use((req, res, next) => {
+  res.setHeader('X-Server-Banner', 'Express/NodeJS-Banking-Core-v3.0.0-DevBuild');
+  
+  // LAB VULNERABILITY: Weak ETag Configuration
+  res.setHeader('ETag', 'W/"vapi-lab-v3-unprotected-hash-998x"');
+  next();
+});
+
+// FIXED LAB VULNERABILITY: HTTP TRACE Method Allowed globally
+// Using an unpathed middleware avoids the path-to-regexp wildcard parsing crash
+app.use((req, res, next) => {
+  if (req.method === 'TRACE') {
+    res.setHeader('Content-Type', 'message/http');
+    return res.status(200).send(`${req.method} ${req.url} HTTP/1.1\r\nHost: ${req.headers.host}\r\n\r\n`);
+  }
+  next();
+});
+
+// ROUTE SEGREGATION: Mounted strictly on the V3 path to protect V1 spaces
+app.use('/api/v3/graphql', graphqlHTTP({
+  schema: schemaV3,
+  rootValue: rootV3,
+  graphiql: true,      
+  validationRules: [], // LAB VULNERABILITY: Introspection completely open
 }));
 
-app.listen(4000, () => {
-  console.log('Server is running on http://localhost:4000/graphql');
+// Placeholder route for your future V1 inventory/SSRF integration exercises
+app.use('/api/v1/internal-status', (req, res) => {
+  res.status(200).json({ status: "V1 endpoint reserved for inventory asset tracking." });
+});
+
+// Bound to 0.0.0.0 to enable direct "Access Through IP" vulnerability testing
+app.listen(4000, '0.0.0.0', () => { 
+  console.log('Server is running successfully!');
+  console.log('V3 Endpoint: http://localhost:4000/api/v3/graphql');
+  console.log('V1 Placeholder: http://localhost:4000/api/v1/internal-status');
 });
