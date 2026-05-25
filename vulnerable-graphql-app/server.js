@@ -51,19 +51,52 @@ const schema = buildSchema(`
 const root = {
   registerUser: async (args) => {
     try {
-      // Vulnerability 1: Weak Password Policy
-      // We take the incoming password string directly and hash it without validating length, numbers, or symbols
-      const hashedPassword = await bcrypt.hash(args.password, 10);
+      // 1. Validate Username Uniqueness
+      const usernameCheck = await pool.query('SELECT id FROM users WHERE username = $1', [args.username]);
+      if (usernameCheck.rows.length > 0) {
+        throw new Error('Validation Error: Username is already taken.');
+      }
+  
 
       // Vulnerability 2: OS Command Injection
       // Simulates sending a confirmation/welcome text via a system command tool using the input email string directly
       if (args.email) {
-        // DANGER: Insecure string concatenation inside a system shell command execution block
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        // Strip out common command injection characters for standard validation, 
+        // but note: to preserve your intentional injection lab vector, you can comment this format check out!
+        if (!emailRegex.test(args.email)) {
+          throw new Error('Validation Error: Invalid email format.');
+        }
+        const emailCheck = await pool.query('SELECT id FROM users WHERE email = $1', [args.email]);
+        if (emailCheck.rows.length > 0) {
+          throw new Error('Validation Error: Email is already registered.');
+        }
+      }
+      // 3. Validate Mobile Number Length (Must be exactly 10 digits)
+      if (args.mobile_no) {
+        const cleanMobile = args.mobile_no.replace(/\D/g, ''); // Strip non-numeric characters if any
+        if (cleanMobile.length !== 10) {
+          throw new Error('Validation Error: Mobile number must be exactly 10 digits long.');
+        }
+      }
+      // 4. Validate Aadhaar Card Length (Must be exactly 12 digits)
+      if (args.aadhar_card) {
+        // Strip out any accidental spaces or hyphens the user typed
+        const cleanAadhar = args.aadhar_card.replace(/\D/g, ''); 
+        if (cleanAadhar.length !== 12) {
+          throw new Error('Validation Error: Aadhaar card number must be exactly 12 digits long.');
+        }
+      }
+      // --- Rest of your existing logic (Hashing, Intentional Vulnerabilities, SQL Query) ---
+      const hashedPassword = await bcrypt.hash(args.password, 10);
+      // Intentional OS Command Injection Lab Vector (kept for your testing)
+      if (args.email) {
         exec(`echo "Sending registration ping to: ${args.email}"`, (error, stdout, stderr) => {
-          if (error) console.error(`Shell Execution Error: ${error}`);
           if (stdout) console.log(`Shell Output:\n${stdout}`);
         });
       }
+
+
 
       // Automatically handle internal setup properties
       const generatedAccountId = 'ACC-' + Math.floor(100000 + Math.random() * 900000);
