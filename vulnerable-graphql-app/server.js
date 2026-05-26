@@ -26,6 +26,13 @@ const schemaV3 = buildSchema(`
     cibil_score: Int
     salary: Float
   }
+  type AuthPayload {
+  id: ID
+  username: String
+  role: String
+  status: String
+  token: String
+}
 
   type Mutation {
     registerUser(
@@ -43,6 +50,8 @@ const schemaV3 = buildSchema(`
       cibil_score: Int,
       salary: Float
     ): User
+    loginUser(username: String!, password: String!): AuthPayload
+
   }
 
   type Query {
@@ -155,6 +164,43 @@ const rootV3 = {
       throw new Error(`Database Debug Trace Error: ${'Registration failed processing due to internal error.'}`);
     }
   },
+  // 2. PASTE THE NEW LOGIN ENDPOINT DIRECTLY HERE
+  // =================================================================
+  loginUser: async (args) => {
+    const { username, password } = args;
+
+    // [VULNERABILITY 1] Username Enumeration check
+    const checkUserQuery = `SELECT * FROM users WHERE username = '${username}'`;
+    
+    try {
+      const userCheckResult = await pool.query(checkUserQuery);
+      if (userCheckResult.rows.length === 0) {
+        throw new Error("ERR_USER_NOT_FOUND: Flag: {TK_VUL_BANK_FLAG_06}.");
+      }
+
+      // [VULNERABILITY 2] SQL Injection vulnerable query string concatenation
+      const sqlInjectedQuery = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;
+      console.log(`Executing Login Query: ${sqlInjectedQuery}`);
+      
+      const result = await pool.query(sqlInjectedQuery);
+      if (result.rows.length === 0) {
+        throw new Error("ERR_INVALID_CREDENTIALS: Flag: {TK_VUL_BANK_FLAG_06}.");
+      }
+
+      const dbUser = result.rows[0];
+      return {
+        id: dbUser.id,
+        username: dbUser.username,
+        role: dbUser.role,
+        status: dbUser.status,
+        token: `Flag: {TK_VUL_BANK_FLAG_07}${dbUser.username.toUpperCase()}`
+      };
+
+    } catch (error) {
+      throw new Error(`Login Exception: ${error.message}`);
+    }
+  }, // <--- End of loginUser
+
 
   getUser: async ({ id }) => {
     const result = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
