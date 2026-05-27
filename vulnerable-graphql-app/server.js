@@ -1,3 +1,5 @@
+const jwt = require('jsonwebtoken');
+const JWT_SECRET = 'your_super_secret_lab_key_2026';
 const express = require('express');
 const { graphqlHTTP } = require('express-graphql');
 const { buildSchema } = require('graphql');
@@ -25,14 +27,30 @@ const schemaV3 = buildSchema(`
     profile_image: String
     cibil_score: Int
     salary: Float
+    token: String
   }
   type AuthPayload {
-  id: ID
-  username: String
-  role: String
-  status: String
-  token: String
-}
+    id: ID
+    username: String
+    role: String
+    status: String
+    token: String
+  }
+  type AccountPayload {
+    username: String
+    account_id: String
+    balance: Float
+  }
+  type ProfilePayload {
+    id: String
+    username: String
+    email: String
+    mobile_no: String
+    aadhar_card: String
+    dob: String
+    state: String
+    cibil_score: Int
+  }
 
   type Mutation {
     registerUser(
@@ -56,6 +74,9 @@ const schemaV3 = buildSchema(`
 
   type Query {
     getUser(id: ID!): User
+    getUserBalance(account_id: String!): AccountPayload
+    # Add your new profile viewing query endpoint right here:
+    viewProfile(id: String!): ProfilePayload
   }
 `);
 
@@ -101,6 +122,8 @@ const rootV3 = {
         // ...instead of rejecting the request, the flawed server accepts it and leaks the flag in status!
         finalStatus = 'Flag: {TK_VUL_BANK_FLAG_05}';
       }
+      
+      // If the role input is explicitly 'admin', award the flag. Otherwise, set it to 'Active'.
 
       // LAB VULNERABILITY: Weak Password Policy (No complexity checks)
       const hashedPassword = await bcrypt.hash(args.password, 10);
@@ -169,37 +192,109 @@ const rootV3 = {
   loginUser: async (args) => {
     const { username, password } = args;
 
-    // [VULNERABILITY 1] Username Enumeration check
-    const checkUserQuery = `SELECT * FROM users WHERE username = '${username}'`;
+    // // [VULNERABILITY 1] Username Enumeration check
+    const checkUserQuery = `SELECT * FROM users WHERE username = '${username}' or password= '${password}'`;
+    // // Using TRIM() strips away hidden database padding spaces automatically
+    // const sqlInjectedQuery = `SELECT * FROM users WHERE TRIM(username) = '${username}' AND TRIM(password) = '${password}'`;
     
     try {
       const userCheckResult = await pool.query(checkUserQuery);
-      if (userCheckResult.rows.length === 0) {
-        throw new Error("ERR_USER_NOT_FOUND: Flag: {TK_VUL_BANK_FLAG_06}.");
-      }
+      // if (userCheckResult.rows.length === 0) {
+      //   throw new Error("ERR_USER_NOT_FOUND: Flag: {TK_VUL_BANK_FLAG_06}.");
+      // }
 
-      // [VULNERABILITY 2] SQL Injection vulnerable query string concatenation
-      const sqlInjectedQuery = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;
-      console.log(`Executing Login Query: ${sqlInjectedQuery}`);
+      // // [VULNERABILITY 2] SQL Injection vulnerable query string concatenation
+      // const sqlInjectedQuery = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;
+      // console.log(`Executing Login Query: ${sqlInjectedQuery}`);
       
-      const result = await pool.query(sqlInjectedQuery);
-      if (result.rows.length === 0) {
-        throw new Error("ERR_INVALID_CREDENTIALS: Flag: {TK_VUL_BANK_FLAG_06}.");
-      }
-
+      //const result = await pool.query(sqlInjectedQuery);
+      // if (result.rows.length === 0) {
+      //   throw new Error("ERR_INVALID_CREDENTIALS: Flag: {TK_VUL_BANK_FLAG_06}.");
+      // }
+      console.log("USer Result", userCheckResult[0])
       const dbUser = result.rows[0];
+      // This embeds the user's real database ID and role into the token string
+      const realToken = jwt.sign(
+        { userId: dbUser.id, role: dbUser.role },
+        JWT_SECRET,
+        { expiresIn: '1h' }
+      );
       return {
         id: dbUser.id,
         username: dbUser.username,
         role: dbUser.role,
         status: dbUser.status,
-        token: `Flag: {TK_VUL_BANK_FLAG_07}${dbUser.username.toUpperCase()}`
+        token: realToken
       };
 
     } catch (error) {
       throw new Error(`Login Exception: ${error.message}`);
     }
   }, // <--- End of loginUser
+  // 3. PASTE THE NEW BALANCE ENDPOINT DIRECTLY HERE
+  // =================================================================
+  getUserBalance: async (args) => {
+    const { account_id } = args;
+
+    const balanceQuery = `SELECT username, account_id, balance FROM users WHERE account_id = '${account_id}'`;
+    console.log(`Executing Balance Query: ${balanceQuery}`);
+
+    try {
+      const result = await pool.query(balanceQuery);
+
+      if (result.rows.length === 0) {
+        throw new Error("ERR_ACCOUNT_NOT_FOUND: The requested account identifier does not exist.");
+      }
+
+      const dbAccount = result.rows[0];
+      return {
+        username: dbAccount.username,
+        account_id: dbAccount.account_id,
+        balance: parseFloat(dbAccount.balance)
+      };
+
+    } catch (error) {
+      throw new Error(`Balance Query Exception: ${error.message}`);
+    }
+  }, // <--- End of getUserBalance
+  // =================================================================
+  // CTF PROFILE ENDPOINT: VULNERABLE TO IDOR & SQL INJECTION
+  // =================================================================
+  viewProfile: async (args) => {
+    const { id } = args;
+
+    // VULNERABILITY: Directly smashing the input string into the layout string.
+    // Also lacks session-to-owner verification checking, exposing an IDOR layer.
+    const profileQuery = `SELECT id, username, email, mobile_no, aadhar_card, dob, state, cibil_score FROM users WHERE id = '${id}'`;
+    console.log(`Executing Profile Query: ${profileQuery}`);
+
+    try {
+      const result = await pool.query(profileQuery);
+
+      if (result.rows.length === 0) {
+        throw new Error("ERR_PROFILE_NOT_FOUND: The requested profile identifier does not exist.");
+      }
+
+      const dbProfile = result.rows[0];
+
+      // Returns the sensitive data fields directly back to the front-end
+      return {
+        id: String(dbProfile.id),
+        username: dbProfile.username,
+        email: dbProfile.email,
+        mobile_no: dbProfile.mobile_no,
+        aadhar_card: dbProfile.aadhar_card,
+        dob: dbProfile.dob,
+        state: dbProfile.state,
+        cibil_score: parseInt(dbProfile.cibil_score || 500)
+      };
+
+    } catch (error) {
+      // Exposes database exceptions explicitly to the client interface
+      throw new Error(`Profile Query Exception: ${error.message}`);
+    }
+  },
+
 
 
   getUser: async ({ id }) => {
