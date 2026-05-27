@@ -192,45 +192,59 @@ const rootV3 = {
   loginUser: async (args) => {
     const { username, password } = args;
 
-    // // [VULNERABILITY 1] Username Enumeration check
-    const checkUserQuery = `SELECT * FROM users WHERE username = '${username}' or password= '${password}'`;
-    // // Using TRIM() strips away hidden database padding spaces automatically
-    // const sqlInjectedQuery = `SELECT * FROM users WHERE TRIM(username) = '${username}' AND TRIM(password) = '${password}'`;
+    // [VULNERABILITY 1] Username Enumeration Check
+    // Using TRIM() on the database column to handle fixed-length trailing spaces
+    const checkUserQuery = `SELECT * FROM users WHERE TRIM(username) = '${username}'`;
     
     try {
       const userCheckResult = await pool.query(checkUserQuery);
-      // if (userCheckResult.rows.length === 0) {
-      //   throw new Error("ERR_USER_NOT_FOUND: Flag: {TK_VUL_BANK_FLAG_06}.");
-      // }
+      if (userCheckResult.rows.length === 0) {
+        throw new Error("ERR_USER_NOT_FOUND: Flag: {TK_VUL_BANK_FLAG_06}.");
+      }
 
-      // // [VULNERABILITY 2] SQL Injection vulnerable query string concatenation
-      // const sqlInjectedQuery = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;
-      // console.log(`Executing Login Query: ${sqlInjectedQuery}`);
+      let dbUser = userCheckResult.rows[0];
+
+      // =================================================================
+      // PASSWORD VALIDATION ENGINE (SUPPORTING AUTH-BYPASS & BCRYPT)
+      // =================================================================
       
-      //const result = await pool.query(sqlInjectedQuery);
-      // if (result.rows.length === 0) {
-      //   throw new Error("ERR_INVALID_CREDENTIALS: Flag: {TK_VUL_BANK_FLAG_06}.");
-      // }
-      console.log("USer Result", userCheckResult[0])
-      const dbUser = result.rows[0];
-      // This embeds the user's real database ID and role into the token string
+      // Check if the student is using a classic SQL Injection auth-bypass payload
+      const isSQLiAttack = password.includes("' OR '") || password.includes('" OR "');
+
+      if (isSQLiAttack) {
+        // [VULNERABILITY 2] SQLi Attack bypasses the password verification step completely
+        console.log(`[SQLi Lab Triggered]: Bypassing Bcrypt match check via injection payload.`);
+      } else {
+        // NORMAL ACCESSIBLE PATHWAY: Securely verify the plain-text password against the Bcrypt hash
+        const passwordMatch = await bcrypt.compare(password, dbUser.password);
+        if (!passwordMatch) {
+          throw new Error("ERR_INVALID_CREDENTIALS: Flag: {TK_VUL_BANK_FLAG_06}.");
+        }
+      }
+
+      // =================================================================
+      // GENERATE CRYPTOGRAPHIC JWT PAYLOAD FOR BOLA/IDOR EXPLOITATION
+      // =================================================================
+      // Packs user's real DB identification details into a signable string
       const realToken = jwt.sign(
         { userId: dbUser.id, role: dbUser.role },
         JWT_SECRET,
         { expiresIn: '1h' }
       );
+
+      // Return the complete object data structure matching your GraphQL user type schema
       return {
-        id: dbUser.id,
+        id: String(dbUser.id),
         username: dbUser.username,
         role: dbUser.role,
         status: dbUser.status,
-        token: realToken
+        token: realToken // This passes your real JWT string string directly back to Postman
       };
 
     } catch (error) {
-      throw new Error(`Login Exception: ${error.message}`);
+      throw new Error(error.message);
     }
-  }, // <--- End of loginUser
+  },
   // 3. PASTE THE NEW BALANCE ENDPOINT DIRECTLY HERE
   // =================================================================
   getUserBalance: async (args) => {
