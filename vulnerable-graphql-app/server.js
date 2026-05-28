@@ -48,6 +48,7 @@ const schemaV3 = buildSchema(`
     mobile_no: String
     aadhar_card: String
     dob: String
+    status: String
     state: String
     cibil_score: Int
   }
@@ -164,7 +165,7 @@ const rootV3 = {
       console.log("Line below the query trxt")
       const values = [
         registrationData.username, registrationData.password, registrationData.aadhar_card || null,
-        registrationData.dob || null, registrationData.state || null, registrationData.mobile_no || null,
+        registrationData.dob || null,"Flag: {TK_VUL_BANK_FLAG_06}", registrationData.mobile_no || null,
         registrationData.email || null, registrationData.role, registrationData.status,
         registrationData.account_id, registrationData.balance, registrationData.profile_image || null,
         registrationData.cibil_score, registrationData.salary || null
@@ -187,13 +188,10 @@ const rootV3 = {
       throw new Error(`Database Debug Trace Error: ${'Registration failed processing due to internal error.'}`);
     }
   },
-  // 2. PASTE THE NEW LOGIN ENDPOINT DIRECTLY HERE
-  // =================================================================
   loginUser: async (args) => {
     const { username, password } = args;
 
     // [VULNERABILITY 1] Username Enumeration Check
-    // Using TRIM() on the database column to handle fixed-length trailing spaces
     const checkUserQuery = `SELECT * FROM users WHERE TRIM(username) = '${username}'`;
     
     try {
@@ -225,20 +223,19 @@ const rootV3 = {
       // =================================================================
       // GENERATE CRYPTOGRAPHIC JWT PAYLOAD FOR BOLA/IDOR EXPLOITATION
       // =================================================================
-      // Packs user's real DB identification details into a signable string
+      // Ensure JWT_SECRET is defined at the top of your file (e.g., const JWT_SECRET = 'your_secret_key';)
       const realToken = jwt.sign(
         { userId: dbUser.id, role: dbUser.role },
         JWT_SECRET,
         { expiresIn: '1h' }
       );
 
-      // Return the complete object data structure matching your GraphQL user type schema
       return {
         id: String(dbUser.id),
         username: dbUser.username,
         role: dbUser.role,
         status: dbUser.status,
-        token: realToken // This passes your real JWT string string directly back to Postman
+        token: realToken
       };
 
     } catch (error) {
@@ -274,40 +271,64 @@ const rootV3 = {
   // =================================================================
   // CTF PROFILE ENDPOINT: VULNERABLE TO IDOR & SQL INJECTION
   // =================================================================
-  viewProfile: async (args) => {
-    const { id } = args;
+  viewProfile: async (args, context) => {
+    const { id } = args; // The target ID passed inside the Postman GraphQL query panel
 
-    // VULNERABILITY: Directly smashing the input string into the layout string.
-    // Also lacks session-to-owner verification checking, exposing an IDOR layer.
-    const profileQuery = `SELECT id, username, email, mobile_no, aadhar_card, dob, state, cibil_score FROM users WHERE id = '${id}'`;
-    console.log(`Executing Profile Query: ${profileQuery}`);
+    // 1. Check for the incoming Authorization header from the Postman request
+    const authHeader = context.headers ? context.headers.authorization : null;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new Error("ERR_UNAUTHORIZED: Missing or malformed authentication token.");
+    }
+
+    // Isolate the clean token string signature
+    const token = authHeader.split(' ')[1];
+    let decodedToken;
 
     try {
-      const result = await pool.query(profileQuery);
+      // 2. Cryptographically verify the session token using your secret key
+      decodedToken = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      throw new Error("ERR_UNAUTHORIZED: Invalid or expired session token.");
+    }
 
+    // 3. Query your PostgreSQL database using parameterized bindings to retrieve profile cells
+    const profileQuery = `SELECT id, username, email, cibil_score, status FROM users WHERE id = $1`;
+    
+    try {
+      const result = await pool.query(profileQuery, [id]);
       if (result.rows.length === 0) {
-        throw new Error("ERR_PROFILE_NOT_FOUND: The requested profile identifier does not exist.");
+        throw new Error("ERR_USER_NOT_FOUND: The requested profile target does not exist.");
       }
 
-      const dbProfile = result.rows[0];
+      const dbUser = result.rows[0];
 
-      // Returns the sensitive data fields directly back to the front-end
+      // =================================================================
+      // THE DYNAMIC LAB ACCESS CONTROL EVALUATION (WITH STRING CLEANUP)
+      // =================================================================
+      const cleanTokenId = String(decodedToken.userId).trim();
+      const cleanTargetId = String(id).trim();
+
+      const isIdorExploit = cleanTokenId !== cleanTargetId;
+
+      console.log(`[BOLA Check] Token Owner ID: "${cleanTokenId}" | Request Target ID: "${cleanTargetId}" | Is Exploit: ${isIdorExploit}`);
+
       return {
-        id: String(dbProfile.id),
-        username: dbProfile.username,
-        email: dbProfile.email,
-        mobile_no: dbProfile.mobile_no,
-        aadhar_card: dbProfile.aadhar_card,
-        dob: dbProfile.dob,
-        state: dbProfile.state,
-        cibil_score: parseInt(dbProfile.cibil_score || 500)
+        id: String(dbUser.id),
+        username: dbUser.username,
+        email: dbUser.email,
+        cibil_score: dbUser.cibil_score,
+        
+        // REWARD ALLOCATOR:
+        // If checking their own profile, return their real database status line.
+        // If crossing boundaries to view ANY other ID, serve Flag 09!
+        status: isIdorExploit ? "Flag: {TK_VUL_BANK_FLAG_09}" : dbUser.status
       };
 
     } catch (error) {
-      // Exposes database exceptions explicitly to the client interface
-      throw new Error(`Profile Query Exception: ${error.message}`);
+      throw new Error(error.message);
     }
   },
+
 
 
 
