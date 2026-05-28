@@ -6,12 +6,15 @@ const { buildSchema } = require('graphql');
 const bcrypt = require('bcryptjs');
 const { exec } = require('child_process');
 const pool = require('./db');
+const fs = require('fs');
+const path = require('path');
 
 // ==========================================
 // V3 SCHEMA & RESOLVER CONFIGURATION
 // ==========================================
 
 const schemaV3 = buildSchema(`
+  scalar Upload
   type User {
     id: ID!
     username: String!
@@ -85,7 +88,7 @@ const schemaV3 = buildSchema(`
     ): User
     loginUser(username: String!, password: String!): AuthPayload
     addMoney(id: ID!, amount: Float!): AddMoneyPayload!
-    uploadProfileImage(id: ID!, base64Image: String!): UploadImagePayload!
+    uploadProfileImage(id: ID!, file: Upload!): UploadImagePayload!
 
   }
 
@@ -403,41 +406,65 @@ const rootV3 = {
     }
   },
   uploadProfileImage: async (args, context) => {
-    const { id, base64Image } = args;
+    const { id, file } = args;
+    
+    // Await the file upload promise details
+    const { createReadStream, filename, mimetype } = await file;
 
-    // 1. Resource Control: Enforce strict length limits on the incoming string
-    // A 2MB image in Base64 string format is approximately 2.7 million characters.
-    if (!base64Image || base64Image.length > 2800000) {
-      throw new Error("ERR_FILE_TOO_LARGE: Uploaded file exceeds the maximum allowed limit of 2MB.");
-    }
-
-    // 2. Strict Input Validation: Validate image type prefix to mitigate format confusion
-    // This ensures we explicitly reject alternative parsing formats like SVG or XML data structures
-    const validFormatRegex = /^data:image\/(jpeg|jpg|png);base64,/;
-    if (!validFormatRegex.test(base64Image)) {
-      throw new Error("ERR_INVALID_FORMAT: File type format rejected. Only standard JPEG and PNG formats are allowed.");
+    // 1. Content-Type Validation
+    // Explicitly allow only raster formats to prevent execution or parsing vulnerabilities
+    if (mimetype !== 'image/png' && mimetype !== 'image/jpeg' && mimetype !== 'image/jpg') {
+      throw new Error("ERR_INVALID_FORMAT: Only standard JPEG and PNG files are allowed.");
     }
 
     try {
-      // 3. Verify target account existence before modifying infrastructure files
-      const userQuery = `SELECT id, username, profile_image, status FROM users WHERE id = $1`;
+      // 2. Verify target account existence
+      const userQuery = `SELECT id, username FROM users WHERE id = $1`;
       const userResult = await pool.query(userQuery, [id]);
-
       if (userResult.rows.length === 0) {
         throw new Error("ERR_USER_NOT_FOUND: The specified account does not exist.");
       }
 
-      const dbUser = userResult.rows[0];
-
-      // 4. Clean and normalize the filename path structure safely
-      const cleanFileName = `profile-${id}-${Date.now()}.png`;
+      // 3. Define a safe, isolated path filename
+      const fileExtension = mimetype === 'image/png' ? '.png' : '.jpg';
+      const cleanFileName = `profile-${id}-${Date.now()}${fileExtension}`;
       
-      // In a live server architecture, the Base64 data can be converted to a binary buffer 
-      // and streamed directly to your file system storage directory or cloud object bucket.
-      // Example target mapping value stored in the database record:
-      const savedPathLocation = `/static/uploads/profiles/${cleanFileName}`;
+      // Define where the file should be saved on your server disk
+      const targetDirectory = path.join(__dirname, 'public', 'uploads', 'profiles');
+      const savedPathLocation = path.join(targetDirectory, cleanFileName);
+      
+      // Ensure directory exists
+      if (!fs.existsSync(targetDirectory)) {
+        fs.mkdirSync(targetDirectory, { recursive: true });
+      }
 
-      // 5. Update the user record path cleanly inside your PostgreSQL collection
+      // 4. Stream the file data safely with resource tracking
+      const stream = createReadStream();
+      let byteCount = 0;
+      const MAX_SIZE = 2 * 1024 * 1024; // 2MB Limit
+
+      await new Promise((resolve, reject) => {
+        const writeStream = fs.createWriteStream(savedPathLocation);
+
+        stream.on('data', (chunk) => {
+          byteCount += chunk.length;
+          // Short-circuit if the streaming file bytes exceed our safety ceiling
+          if (byteCount > MAX_SIZE) {
+            stream.destroy();
+            writeStream.destroy();
+            // Delete the partially written file fragments from disk immediately
+            if (fs.existsSync(savedPathLocation)) fs.unlinkSync(savedPathLocation);
+            reject(new Error("ERR_FILE_TOO_LARGE: Uploaded file exceeds the maximum allowed limit of 2MB."));
+          }
+        });
+
+        stream.pipe(writeStream);
+        writeStream.on('finish', resolve);
+        writeStream.on('error', reject);
+      });
+
+      // 5. Update the path record inside your PostgreSQL database
+      const dbPathValue = `/static/uploads/profiles/${cleanFileName}`;
       const updateQuery = `
         UPDATE users 
         SET profile_image = $1 
@@ -445,14 +472,13 @@ const rootV3 = {
         RETURNING id, username, balance, role, status, email, profile_image
       `;
       
-      const updateResult = await pool.query(updateQuery, [savedPathLocation, id]);
+      const updateResult = await pool.query(updateQuery, [dbPathValue, id]);
       const updatedUser = updateResult.rows[0];
 
-      // 6. Return the standard, well-structured success payload
       return {
         success: true,
-        message: "Profile photo successfully validated, optimized, and updated.",
-        imageUrl: savedPathLocation,
+        message: "Profile image successfully streamed, validated, and updated.",
+        imageUrl: dbPathValue,
         user: {
           id: String(updatedUser.id),
           username: updatedUser.username,
@@ -468,7 +494,6 @@ const rootV3 = {
       throw new Error(error.message);
     }
   },
-
 
 
 
