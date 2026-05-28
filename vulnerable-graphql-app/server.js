@@ -52,6 +52,20 @@ const schemaV3 = buildSchema(`
     state: String
     cibil_score: Int
   }
+  type AddMoneyPayload {
+    success: Boolean!
+    message: String!
+    transactionId: String!
+    previousBalance: Float!
+    newBalance: Float!
+    user: User!
+  }
+  type UploadImagePayload {
+    success: Boolean!
+    message: String!
+    imageUrl: String!
+    user: User!
+  }
 
   type Mutation {
     registerUser(
@@ -70,6 +84,8 @@ const schemaV3 = buildSchema(`
       salary: Float
     ): User
     loginUser(username: String!, password: String!): AuthPayload
+    addMoney(id: ID!, amount: Float!): AddMoneyPayload!
+    uploadProfileImage(id: ID!, base64Image: String!): UploadImagePayload!
 
   }
 
@@ -322,6 +338,130 @@ const rootV3 = {
         // If checking their own profile, return their real database status line.
         // If crossing boundaries to view ANY other ID, serve Flag 09!
         status: isIdorExploit ? "Flag: {TK_VUL_BANK_FLAG_09}" : dbUser.status
+      };
+
+    } catch (error) {
+      throw new Error(error.message);
+    }
+  },
+  addMoney: async (args, context) => {
+    const { id, amount } = args;
+
+    // 1. Basic validation: Prevent negative or invalid amount payloads
+    if (amount <= 0) {
+      throw new Error("ERR_INVALID_AMOUNT: Deposit amount must be greater than zero.");
+    }
+
+    try {
+      // 2. Fetch the user's existing profile records from PostgreSQL
+      const userQuery = `SELECT id, username, balance, role, status, email FROM users WHERE id = $1`;
+      const userResult = await pool.query(userQuery, [id]);
+
+      if (userResult.rows.length === 0) {
+        throw new Error("ERR_USER_NOT_FOUND: The specified account does not exist.");
+      }
+
+      const dbUser = userResult.rows[0];
+
+      // 3. Keep track of the old balance and compute the new sum
+      const previousBalance = parseFloat(dbUser.balance) || 0.0;
+      const updatedBalance = previousBalance + parseFloat(amount);
+
+      // 4. Persist the newly computed balance back to the database
+      const updateQuery = `
+        UPDATE users 
+        SET balance = $1 
+        WHERE id = $2 
+        RETURNING id, username, balance, role, status, email
+      `;
+      
+      const updateResult = await pool.query(updateQuery, [updatedBalance, id]);
+      const updatedUser = updateResult.rows[0];
+
+      // Generate a mock tracking transaction ID for the receipt payload
+      const mockTxId = `TXN-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+      // 5. Return the clean structural object matching AddMoneyPayload
+      return {
+        success: true,
+        message: `Successfully added $${parseFloat(amount).toFixed(2)} to your wallet account.`,
+        transactionId: mockTxId,
+        previousBalance: previousBalance,
+        newBalance: parseFloat(updatedUser.balance),
+        user: {
+          id: String(updatedUser.id),
+          username: updatedUser.username,
+          email: updatedUser.email,
+          role: updatedUser.role,
+          status: updatedUser.status,
+          balance: parseFloat(updatedUser.balance)
+        }
+      };
+
+    } catch (error) {
+      throw new Error(error.message);
+    }
+  },
+  uploadProfileImage: async (args, context) => {
+    const { id, base64Image } = args;
+
+    // 1. Resource Control: Enforce strict length limits on the incoming string
+    // A 2MB image in Base64 string format is approximately 2.7 million characters.
+    if (!base64Image || base64Image.length > 2800000) {
+      throw new Error("ERR_FILE_TOO_LARGE: Uploaded file exceeds the maximum allowed limit of 2MB.");
+    }
+
+    // 2. Strict Input Validation: Validate image type prefix to mitigate format confusion
+    // This ensures we explicitly reject alternative parsing formats like SVG or XML data structures
+    const validFormatRegex = /^data:image\/(jpeg|jpg|png);base64,/;
+    if (!validFormatRegex.test(base64Image)) {
+      throw new Error("ERR_INVALID_FORMAT: File type format rejected. Only standard JPEG and PNG formats are allowed.");
+    }
+
+    try {
+      // 3. Verify target account existence before modifying infrastructure files
+      const userQuery = `SELECT id, username, profile_image, status FROM users WHERE id = $1`;
+      const userResult = await pool.query(userQuery, [id]);
+
+      if (userResult.rows.length === 0) {
+        throw new Error("ERR_USER_NOT_FOUND: The specified account does not exist.");
+      }
+
+      const dbUser = userResult.rows[0];
+
+      // 4. Clean and normalize the filename path structure safely
+      const cleanFileName = `profile-${id}-${Date.now()}.png`;
+      
+      // In a live server architecture, the Base64 data can be converted to a binary buffer 
+      // and streamed directly to your file system storage directory or cloud object bucket.
+      // Example target mapping value stored in the database record:
+      const savedPathLocation = `/static/uploads/profiles/${cleanFileName}`;
+
+      // 5. Update the user record path cleanly inside your PostgreSQL collection
+      const updateQuery = `
+        UPDATE users 
+        SET profile_image = $1 
+        WHERE id = $2 
+        RETURNING id, username, balance, role, status, email, profile_image
+      `;
+      
+      const updateResult = await pool.query(updateQuery, [savedPathLocation, id]);
+      const updatedUser = updateResult.rows[0];
+
+      // 6. Return the standard, well-structured success payload
+      return {
+        success: true,
+        message: "Profile photo successfully validated, optimized, and updated.",
+        imageUrl: savedPathLocation,
+        user: {
+          id: String(updatedUser.id),
+          username: updatedUser.username,
+          email: updatedUser.email,
+          role: updatedUser.role,
+          status: updatedUser.status,
+          balance: parseFloat(updatedUser.balance) || 0.0,
+          profile_image: updatedUser.profile_image
+        }
       };
 
     } catch (error) {
