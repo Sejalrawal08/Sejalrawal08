@@ -1,3 +1,4 @@
+const path = require('path');
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = 'your_super_secret_lab_key_2026';
 const express = require('express');
@@ -7,7 +8,7 @@ const bcrypt = require('bcryptjs');
 const { exec } = require('child_process');
 const pool = require('./db');
 const fs = require('fs');
-const path = require('path');
+const { graphqlUploadExpress } = require('graphql-upload-minimal');
 
 // ==========================================
 // V3 SCHEMA & RESOLVER CONFIGURATION
@@ -54,6 +55,7 @@ const schemaV3 = buildSchema(`
     status: String
     state: String
     cibil_score: Int
+    profile_image: String
   }
   type AddMoneyPayload {
     success: Boolean!
@@ -311,7 +313,7 @@ const rootV3 = {
     }
 
     // 3. Query your PostgreSQL database using parameterized bindings to retrieve profile cells
-    const profileQuery = `SELECT id, username, email, cibil_score, status FROM users WHERE id = $1`;
+    const profileQuery = `SELECT id, username, email, cibil_score, status, profile_image FROM users WHERE id = $1`;
     
     try {
       const result = await pool.query(profileQuery, [id]);
@@ -340,7 +342,8 @@ const rootV3 = {
         // REWARD ALLOCATOR:
         // If checking their own profile, return their real database status line.
         // If crossing boundaries to view ANY other ID, serve Flag 09!
-        status: isIdorExploit ? "Flag: {TK_VUL_BANK_FLAG_09}" : dbUser.status
+        status: isIdorExploit ? "Flag: {TK_VUL_BANK_FLAG_09}" : dbUser.status,
+        profile_image: dbUser.profile_image // This returns the path string!
       };
 
     } catch (error) {
@@ -406,97 +409,138 @@ const rootV3 = {
     }
   },
   uploadProfileImage: async (args, context) => {
-    const { id, file } = args;
-    
-    // Await the file upload promise details
-    const { createReadStream, filename, mimetype } = await file;
+  const { id, file } = args;
 
-    // 1. Content-Type Validation
-    // Explicitly allow only raster formats to prevent execution or parsing vulnerabilities
-    if (mimetype !== 'image/png' && mimetype !== 'image/jpeg' && mimetype !== 'image/jpg') {
+  const path = require('path');
+  const fs = require('fs');
+
+  try {
+    // 1. Resolve the promise safely
+    const resolvedFile = await file;
+    if (!resolvedFile) {
+      throw new Error("ERR_NO_FILE: No upload data detected.");
+    }
+
+    // 2. Flexible Unpacking
+    let createReadStream, filename, mimetype;
+    if (resolvedFile.file) {
+      createReadStream = resolvedFile.file.createReadStream;
+      filename = resolvedFile.file.filename;
+      mimetype = resolvedFile.file.mimetype;
+    } else {
+      createReadStream = resolvedFile.createReadStream;
+      filename = resolvedFile.filename;
+      mimetype = resolvedFile.mimetype;
+    }
+   
+
+    if (typeof createReadStream !== 'function') {
+      throw new Error("ERR_STREAM_FAILED: Server failed to initialize the stream function.");
+    }
+
+    // 3. Format Validation (Resilient Check)
+    const fileExtension = filename ? path.extname(filename).toLowerCase() : '';
+    const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+    const allowedExtensions = ['.png', '.jpg', '.jpeg'];
+
+    if (!allowedMimeTypes.includes(mimetype) && !allowedExtensions.includes(fileExtension)) {
       throw new Error("ERR_INVALID_FORMAT: Only standard JPEG and PNG files are allowed.");
     }
 
-    try {
-      // 2. Verify target account existence
-      const userQuery = `SELECT id, username FROM users WHERE id = $1`;
-      const userResult = await pool.query(userQuery, [id]);
-      if (userResult.rows.length === 0) {
-        throw new Error("ERR_USER_NOT_FOUND: The specified account does not exist.");
-      }
+    // 4. Construct safe destination directory and file name
+    const targetDirectory = path.join(__dirname, 'public', 'uploads', 'profiles');
+    const cleanFileName = `profile-${id}-${Date.now()}${fileExtension || '.jpg'}`;
+    const savedPathLocation = path.join(targetDirectory, cleanFileName);
 
-      // 3. Define a safe, isolated path filename
-      const fileExtension = mimetype === 'image/png' ? '.png' : '.jpg';
-      const cleanFileName = `profile-${id}-${Date.now()}${fileExtension}`;
+    if (!fs.existsSync(targetDirectory)) {
+      fs.mkdirSync(targetDirectory, { recursive: true });
+    }
+
+    // 5. Pipe stream chunk data with an AGGRESSIVE 2MB Size Limit Tracker
+    const stream = createReadStream();
+    let byteCount = 0;
+    const MAX_SIZE = 2 * 1024 * 1024; // Strict 2MB Limit (2,097,152 Bytes)
+
+    await new Promise((resolve, reject) => {
+      const writeStream = fs.createWriteStream(savedPathLocation);
       
-      // Define where the file should be saved on your server disk
-      const targetDirectory = path.join(__dirname, 'public', 'uploads', 'profiles');
-      const savedPathLocation = path.join(targetDirectory, cleanFileName);
-      
-      // Ensure directory exists
-      if (!fs.existsSync(targetDirectory)) {
-        fs.mkdirSync(targetDirectory, { recursive: true });
-      }
+      stream.on('data', (chunk) => {
+        byteCount += chunk.length;
+        
+        console.log(`Received chunk. Current total size: ${byteCount} bytes`);
+        // The instant it crosses 2MB, kill everything immediately!
 
-      // 4. Stream the file data safely with resource tracking
-      const stream = createReadStream();
-      let byteCount = 0;
-      const MAX_SIZE = 2 * 1024 * 1024; // 2MB Limit
+        if (byteCount > 2 * 1024 * 1024) { // 2MB
+     stream.destroy();
+     console.log("File rejected: Exceeded 2MB");
+  }
 
-      await new Promise((resolve, reject) => {
-        const writeStream = fs.createWriteStream(savedPathLocation);
+        // if (byteCount > MAX_SIZE) {
+        //   stream.destroy();       // Close the incoming file stream channel
+        //   writeStream.destroy();  // Stop writing to the hard drive immediately
+          
+        //   // Delete any broken file chunks left behind on your disk
+        //   // setTimeout(() => {
+        //   //   if (fs.existsSync(savedPathLocation)) {
+        //   //     try {
+        //   //       fs.unlinkSync(savedPathLocation);
+        //   //     } catch (e) {
+        //   //       console.log("Cleanup pending background file unlock...");
+        //   //     }
+        //   //   }
+        //   // }, 1000);
+        //   console.log("High Size file")
+        //   reject(new Error("ERR_FILE_TOO_LARGE: File size exceeds the permitted 2MB limit."));
+        // }
 
-        stream.on('data', (chunk) => {
-          byteCount += chunk.length;
-          // Short-circuit if the streaming file bytes exceed our safety ceiling
-          if (byteCount > MAX_SIZE) {
-            stream.destroy();
-            writeStream.destroy();
-            // Delete the partially written file fragments from disk immediately
-            if (fs.existsSync(savedPathLocation)) fs.unlinkSync(savedPathLocation);
-            reject(new Error("ERR_FILE_TOO_LARGE: Uploaded file exceeds the maximum allowed limit of 2MB."));
-          }
-        });
-
-        stream.pipe(writeStream);
-        writeStream.on('finish', resolve);
-        writeStream.on('error', reject);
       });
 
-      // 5. Update the path record inside your PostgreSQL database
-      const dbPathValue = `/static/uploads/profiles/${cleanFileName}`;
-      const updateQuery = `
-        UPDATE users 
-        SET profile_image = $1 
-        WHERE id = $2 
-        RETURNING id, username, balance, role, status, email, profile_image
-      `;
+      stream.on('end', () => {
+        return { message:"TK_FLAG_10"}
+        console.log(`Upload complete! Final file size: ${byteCount} bytes`);
+});
+
+      stream.on('error', (err) => {
+        writeStream.destroy();
+        reject(err);
+      });
       
-      const updateResult = await pool.query(updateQuery, [dbPathValue, id]);
-      const updatedUser = updateResult.rows[0];
+      writeStream.on('error', (err) => {
+        stream.destroy();
+        reject(err);
+      });
+      
+      writeStream.on('finish', () => resolve());
 
-      return {
-        success: true,
-        message: "Profile image successfully streamed, validated, and updated.",
-        imageUrl: dbPathValue,
-        user: {
-          id: String(updatedUser.id),
-          username: updatedUser.username,
-          email: updatedUser.email,
-          role: updatedUser.role,
-          status: updatedUser.status,
-          balance: parseFloat(updatedUser.balance) || 0.0,
-          profile_image: updatedUser.profile_image
-        }
-      };
+      stream.pipe(writeStream);
+    });
 
-    } catch (error) {
-      throw new Error(error.message);
-    }
-  },
+    // 6. Persist URL reference string to Database
+    const relativeImageUrl = `/uploads/profiles/${cleanFileName}`;
+    const updateQuery = `UPDATE users SET profile_image = $1 WHERE id = $2 RETURNING *`;
+    const updateResult = await pool.query(updateQuery, [relativeImageUrl, id]);
+    const updatedUser = updateResult.rows[0];
 
+    // 7. Output standard return payload
+    return {
+      success: true,
+      message: "Profile image uploaded and validated successfully.",
+      imageUrl: relativeImageUrl,
+      user: {
+        id: String(updatedUser.id),
+        username: updatedUser.username,
+        email: updatedUser.email,
+        role: updatedUser.role,
+        status: updatedUser.status,
+        balance: parseFloat(updatedUser.balance) || 0.0,
+        profile_image: updatedUser.profile_image
+      }
+    };
 
-
+  } catch (error) {
+    throw new Error(error.message);
+  }
+},
   getUser: async ({ id }) => {
     const result = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
     return result.rows[0];
@@ -511,8 +555,10 @@ const app = express();
 // ==========================================
 // BODY PARSING MIDDLEWARE (CRITICAL FIX FOR 404)
 // ==========================================
-app.use(express.json()); // Allows Express to read raw JSON payloads
-app.use(express.urlencoded({ extended: true })); // Allows form-data parsing
+app.use(express.json({ limit: '10mb' })); // Allows Express to read raw JSON payloads
+app.use(express.urlencoded({ limit: '10mb', extended: true })); // Allows form-data parsing
+app.use(graphqlUploadExpress({ maxFileSize: 2000000, maxFiles: 1 }));
+
 
 // LAB VULNERABILITY: Banner Grabbing Enabled & Missing Security Headers
 app.set('x-powered-by', true); 
