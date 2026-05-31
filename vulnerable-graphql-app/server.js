@@ -415,14 +415,15 @@ const rootV3 = {
   const fs = require('fs');
 
   try {
-    // 1. Resolve the promise safely
+    // 1. Safely resolve the incoming promise object
     const resolvedFile = await file;
     if (!resolvedFile) {
       throw new Error("ERR_NO_FILE: No upload data detected.");
     }
 
-    // 2. Flexible Unpacking
+    // 2. Flexible Unpacking (Keeps your uploads working smoothly)
     let createReadStream, filename, mimetype;
+    
     if (resolvedFile.file) {
       createReadStream = resolvedFile.file.createReadStream;
       filename = resolvedFile.file.filename;
@@ -432,22 +433,24 @@ const rootV3 = {
       filename = resolvedFile.filename;
       mimetype = resolvedFile.mimetype;
     }
-   
 
     if (typeof createReadStream !== 'function') {
       throw new Error("ERR_STREAM_FAILED: Server failed to initialize the stream function.");
     }
 
-    // 3. Format Validation (Resilient Check)
+    // 3. Format Validation
     const fileExtension = filename ? path.extname(filename).toLowerCase() : '';
     const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png'];
     const allowedExtensions = ['.png', '.jpg', '.jpeg'];
 
-    if (!allowedMimeTypes.includes(mimetype) && !allowedExtensions.includes(fileExtension)) {
+    const isValidMime = allowedMimeTypes.includes(mimetype);
+    const isValidExt = allowedExtensions.includes(fileExtension);
+
+    if (!isValidMime && !isValidExt) {
       throw new Error("ERR_INVALID_FORMAT: Only standard JPEG and PNG files are allowed.");
     }
 
-    // 4. Construct safe destination directory and file name
+    // 4. Construct safe destination directory and clean file name
     const targetDirectory = path.join(__dirname, 'public', 'uploads', 'profiles');
     const cleanFileName = `profile-${id}-${Date.now()}${fileExtension || '.jpg'}`;
     const savedPathLocation = path.join(targetDirectory, cleanFileName);
@@ -456,50 +459,48 @@ const rootV3 = {
       fs.mkdirSync(targetDirectory, { recursive: true });
     }
 
-    // 5. Pipe stream chunk data with an AGGRESSIVE 2MB Size Limit Tracker
+    // 5. Pipe stream data with a strict 2MB Size Exception Handler
     const stream = createReadStream();
-    let byteCount = 0;
-    const MAX_SIZE = 2 * 1024 * 1024; // Strict 2MB Limit (2,097,152 Bytes)
-
+    
     await new Promise((resolve, reject) => {
       const writeStream = fs.createWriteStream(savedPathLocation);
       
-      stream.on('data', (chunk) => {
-        byteCount += chunk.length;
+      // A. Catches the limit truncation event emitted by the upload middleware library
+      stream.on('limit', () => {
+        stream.destroy();
+        writeStream.destroy();
         
-        console.log(`Received chunk. Current total size: ${byteCount} bytes`);
-        // The instant it crosses 2MB, kill everything immediately!
-
-        if (byteCount > 2 * 1024 * 1024) { // 2MB
-     stream.destroy();
-     console.log("File rejected: Exceeded 2MB");
-  }
-
-        // if (byteCount > MAX_SIZE) {
-        //   stream.destroy();       // Close the incoming file stream channel
-        //   writeStream.destroy();  // Stop writing to the hard drive immediately
-          
-        //   // Delete any broken file chunks left behind on your disk
-        //   // setTimeout(() => {
-        //   //   if (fs.existsSync(savedPathLocation)) {
-        //   //     try {
-        //   //       fs.unlinkSync(savedPathLocation);
-        //   //     } catch (e) {
-        //   //       console.log("Cleanup pending background file unlock...");
-        //   //     }
-        //   //   }
-        //   // }, 1000);
-        //   console.log("High Size file")
-        //   reject(new Error("ERR_FILE_TOO_LARGE: File size exceeds the permitted 2MB limit."));
-        // }
-
+        // Clean up partial chunks left on disk
+        setTimeout(() => {
+          if (fs.existsSync(savedPathLocation)) {
+            try { fs.unlinkSync(savedPathLocation); } catch (e) {}
+          }
+        }, 100);
+        
+        reject(new Error("ERR_FILE_TOO_LARGE: The uploaded file exceeds the strict 2MB system limit."));
       });
 
-      stream.on('end', () => {
-        return { message:"TK_FLAG_10"}
-        console.log(`Upload complete! Final file size: ${byteCount} bytes`);
-});
+      // B. Backup manual chunk byte calculator tracker
+      let byteCount = 0;
+      stream.on('data', (chunk) => {
+        byteCount += chunk.length;
+        console.log(`Received chunk. Current total size: ${byteCount} bytes`);
+        
+        if (byteCount > 2000000) { // Strict 2MB cutoff limit threshold
+          stream.destroy();
+          writeStream.destroy();
+          
+          setTimeout(() => {
+            if (fs.existsSync(savedPathLocation)) {
+              try { fs.unlinkSync(savedPathLocation); } catch (e) {}
+            }
+          }, 100);
+          
+          reject(new Error("ERR_FILE_TOO_LARGE: The uploaded file exceeds the strict 2MB system limit."));
+        }
+      });
 
+      // Error handlers
       stream.on('error', (err) => {
         writeStream.destroy();
         reject(err);
@@ -515,13 +516,13 @@ const rootV3 = {
       stream.pipe(writeStream);
     });
 
-    // 6. Persist URL reference string to Database
+    // 6. Save image URL reference path to Database
     const relativeImageUrl = `/uploads/profiles/${cleanFileName}`;
     const updateQuery = `UPDATE users SET profile_image = $1 WHERE id = $2 RETURNING *`;
     const updateResult = await pool.query(updateQuery, [relativeImageUrl, id]);
     const updatedUser = updateResult.rows[0];
 
-    // 7. Output standard return payload
+    // 7. Output matching successful return interface layout
     return {
       success: true,
       message: "Profile image uploaded and validated successfully.",
@@ -555,10 +556,24 @@ const app = express();
 // ==========================================
 // BODY PARSING MIDDLEWARE (CRITICAL FIX FOR 404)
 // ==========================================
-app.use(express.json({ limit: '10mb' })); // Allows Express to read raw JSON payloads
-app.use(express.urlencoded({ limit: '10mb', extended: true })); // Allows form-data parsing
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ limit: '15mb', extended: true }));
 app.use(graphqlUploadExpress({ maxFileSize: 2000000, maxFiles: 1 }));
-
+// 3. CRITICAL: Add this Express Error Handler immediately BELOW the GraphQL middleware declaration.
+// This catches the hidden error emitted by graphqlUploadExpress when a file crosses 2,000,000 bytes!
+app.use((err, req, res, next) => {
+  if (err && err.message && err.message.includes('File size limit exceeded')) {
+    return res.status(413).json({
+      errors: [
+        {
+          message: "ERR_FILE_TOO_LARGE: The uploaded file exceeds the strict 2MB system limit.",
+          extensions: { code: "BAD_USER_INPUT" }
+        }
+      ]
+    });
+  }
+  next(err);
+});
 
 // LAB VULNERABILITY: Banner Grabbing Enabled & Missing Security Headers
 app.set('x-powered-by', true); 
