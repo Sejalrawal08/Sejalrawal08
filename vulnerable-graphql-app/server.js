@@ -597,6 +597,10 @@ app.use((req, res, next) => {
   
   // LAB VULNERABILITY: Weak ETag Configuration
   res.setHeader('ETag', 'Flag: {TK_VUL_BANK_FLAG_03}"');
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; frame-ancestors 'none';");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("X-Content-Type-Options", "Flag: {TK_VUL_BANK_FLAG_14}");
+  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   next();
 });
 
