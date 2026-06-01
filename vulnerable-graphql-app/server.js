@@ -71,6 +71,7 @@ const schemaV3 = buildSchema(`
     imageUrl: String!
     user: User!
   }
+  
 
   type Mutation {
     registerUser(
@@ -91,7 +92,6 @@ const schemaV3 = buildSchema(`
     loginUser(username: String!, password: String!): AuthPayload
     addMoney(id: ID!, amount: Float!): AddMoneyPayload!
     uploadProfileImage(id: ID!, file: Upload!): UploadImagePayload!
-
   }
 
   type Query {
@@ -475,9 +475,9 @@ const rootV3 = {
           if (fs.existsSync(savedPathLocation)) {
             try { fs.unlinkSync(savedPathLocation); } catch (e) {}
           }
-        }, 100);
+        }, 5000);
         
-        reject(new Error("ERR_FILE_TOO_LARGE: The uploaded file exceeds the strict 2MB system limit."));
+        reject(new Error("ERR_FILE_TOO_LARGE: Flag: {TK_VUL_BANK_FLAG_10}"));
       });
 
       // B. Backup manual chunk byte calculator tracker
@@ -494,7 +494,7 @@ const rootV3 = {
             if (fs.existsSync(savedPathLocation)) {
               try { fs.unlinkSync(savedPathLocation); } catch (e) {}
             }
-          }, 100);
+          }, 5000);
           
           reject(new Error("ERR_FILE_TOO_LARGE: The uploaded file exceeds the strict 2MB system limit."));
         }
@@ -548,11 +548,18 @@ const rootV3 = {
   }
 };
 
+
 // ==========================================
 // EXPRESS INFRASTRUCTURE MOUNTING
 // ==========================================
 
 const app = express();
+
+// 1. GLOBAL REST BODY PARSERS (PLACE HERE)
+// ==========================================
+// These must run first so they can read the incoming JSON data from Postman
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 // ==========================================
 // BODY PARSING MIDDLEWARE (CRITICAL FIX FOR 404)
 // ==========================================
@@ -604,10 +611,134 @@ app.use('/api/v3/graphql', graphqlHTTP({
 }));
 
 // Placeholder route for your future V1 inventory/SSRF integration exercises
-app.use('/api/v1/internal-status', (req, res) => {
-  res.status(200).json({ status: "V1 endpoint reserved for inventory asset tracking." });
-});
+// ============================================================================
+// V1 INVENTORY MANAGEMENT & SSRF ENDPOINT (THE ATTACK SURFACE)
+// ============================================================================
+// ============================================================================
+// V1 REMITTANCE TRANSFER & SSRF ENDPOINT (THE ATTACK SURFACE)
+// ============================================================================
+app.use('/api/v1/internal-status', async (req, res) => {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ 
+      error: "Method Not Allowed. Please send a POST request with transfer data." 
+    });
+  }
 
+  // Expecting: senderId, receiverId, amount, and the tracking webhook
+  const { senderId, receiverId, amount, supplierWebhookUrl } = req.body;
+
+  // Validate fields
+  if (!senderId || !receiverId || !amount) {
+    return res.status(400).json({ error: "Missing required parameters: senderId, receiverId, or amount." });
+  }
+
+  const transferAmount = parseFloat(amount);
+  if (isNaN(transferAmount) || transferAmount <= 0) {
+    return res.status(400).json({ error: "Invalid transfer amount. Must be a positive number." });
+  }
+
+  if (String(senderId) === String(receiverId)) {
+    return res.status(400).json({ error: "Sender and receiver account IDs cannot be identical." });
+  }
+
+  const http = require('http');
+  const https = require('https');
+  const urlModule = require('url');
+
+  try {
+    // Begin Transaction isolation block in PostgreSQL if supported, or run sequential validations
+    
+    // 1. Verify Sender profile and balance
+    const senderResult = await pool.query(`SELECT * FROM users WHERE id = $1`, [senderId]);
+    if (senderResult.rows.length === 0) {
+      return res.status(444).json({ error: "ERR_SENDER_NOT_FOUND: Originating account profile missing." });
+    }
+    const sender = senderResult.rows[0];
+
+    // Check if sender has enough balance
+    if (parseFloat(sender.balance) < transferAmount) {
+      return res.status(400).json({ 
+        error: `ERR_INSUFFICIENT_FUNDS: Requested transfer is $${transferAmount.toFixed(2)}, available wallet balance is $${parseFloat(sender.balance).toFixed(2)}.` 
+      });
+    }
+
+    // 2. Verify Receiver profile exists
+    const receiverResult = await pool.query(`SELECT * FROM users WHERE id = $1`, [receiverId]);
+    if (receiverResult.rows.length === 0) {
+      return res.status(444).json({ error: "ERR_RECEIVER_NOT_FOUND: Target destination account profile missing." });
+    }
+
+    // 3. Perform Account Balances Adjustments
+    // Deduct from sender
+    const newSenderBalance = parseFloat(sender.balance) - transferAmount;
+    await pool.query(`UPDATE users SET balance = $1 WHERE id = $2`, [newSenderBalance, senderId]);
+
+    // Add to receiver
+    await pool.query(`UPDATE users SET balance = balance + $1 WHERE id = $2`, [transferAmount, receiverId]);
+
+    // 4. Log the transaction ledger row record entry
+   const logResult = await pool.query(
+      `INSERT INTO transactions (sender_id, receiver_id, amount, sender_remaining_balance, status) 
+       VALUES ($1, $2, $3, $4, 'SUCCESS') RETURNING id`,
+      [senderId, receiverId, transferAmount, newSenderBalance]
+    );
+    const transactionId = logResult.rows[0].id;
+
+    // ------------------------------------------------------------------------
+    // SERVER-SIDE REQUEST FORGERY (SSRF) VECTOR
+    // ------------------------------------------------------------------------
+    let webhookSyncOutput = "No receipt notification sync URL supplied.";
+
+    if (supplierWebhookUrl) {
+      webhookSyncOutput = await new Promise((resolve) => {
+        const parsedUrl = urlModule.parse(supplierWebhookUrl);
+        const engine = parsedUrl.protocol === 'https:' ? https : http;
+
+        const requestConfig = {
+          hostname: parsedUrl.hostname,
+          port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+          path: parsedUrl.path || '/',
+          method: 'GET',
+          timeout: 2500
+        };
+
+        const remoteReq = engine.request(requestConfig, (remoteRes) => {
+          let buffer = '';
+          remoteRes.on('data', (chunk) => { buffer += chunk; });
+          remoteRes.on('end', () => {
+            resolve(`[HTTP ${remoteRes.statusCode}] ${buffer.substring(0, 800)}`);
+          });
+        });
+
+        remoteReq.on('error', (err) => {
+          resolve(`[Connection Failed] Error interacting with target socket: ${err.message}`);
+        });
+
+        remoteReq.on('timeout', () => {
+          remoteReq.destroy();
+          resolve('[Socket Timeout] Remote system response window expired.');
+        });
+
+        remoteReq.end();
+      });
+    }
+
+    // 5. Respond to Client
+    return res.status(200).json({
+      success: true,
+      status: "Fund remittance transfer completed successfully.",
+      transferDetails: {
+        receiptId: String(transactionId),
+        amountTransferred: transferAmount,
+        yourRemainingBalance: newSenderBalance
+      },
+      supplierSyncResponse: webhookSyncOutput
+    });
+
+  } catch (error) {
+    return res.status(500).json({ error: `Internal Server Exception: ${error.message}` });
+  }
+});
 // Bound to 0.0.0.0 to enable direct "Access Through IP" vulnerability testing
 app.listen(4000, '0.0.0.0', () => { 
   console.log('Server is running successfully!');
