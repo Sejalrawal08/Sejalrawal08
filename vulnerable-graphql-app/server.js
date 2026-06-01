@@ -554,17 +554,25 @@ const rootV3 = {
 // ==========================================
 
 const app = express();
+const internalApp = express();
 
 // 1. GLOBAL REST BODY PARSERS (PLACE HERE)
 // ==========================================
 // These must run first so they can read the incoming JSON data from Postman
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+internalApp.use(express.json());
+internalApp.use(express.urlencoded({ extended: true }));
 // ==========================================
 // BODY PARSING MIDDLEWARE (CRITICAL FIX FOR 404)
 // ==========================================
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ limit: '15mb', extended: true }));
+
+// Now this will not error out because internalApp was defined at the top of the file!
+internalApp.use(express.json({ limit: '15mb' }));
+internalApp.use(express.urlencoded({ limit: '15mb', extended: true }));
 app.use(graphqlUploadExpress({ maxFileSize: 2000000, maxFiles: 1 }));
 // 3. CRITICAL: Add this Express Error Handler immediately BELOW the GraphQL middleware declaration.
 // This catches the hidden error emitted by graphqlUploadExpress when a file crosses 2,000,000 bytes!
@@ -616,29 +624,12 @@ app.use('/api/v3/graphql', graphqlHTTP({
 // ============================================================================
 // ============================================================================
 // V1 REMITTANCE TRANSFER & SSRF ENDPOINT (THE ATTACK SURFACE)
-// ============================================================================
-app.use('/api/v1/internal-status', async (req, res) => {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ 
-      error: "Method Not Allowed. Please send a POST request with transfer data." 
-    });
-  }
-
-  // Expecting: senderId, receiverId, amount, and the tracking webhook
+// Remittance endpoint processing database adjustments & carrying the SSRF flaw
+app.post('/api/v1/internal-status', async (req, res) => {
   const { senderId, receiverId, amount, supplierWebhookUrl } = req.body;
 
-  // Validate fields
-  if (!senderId || !receiverId || !amount) {
-    return res.status(400).json({ error: "Missing required parameters: senderId, receiverId, or amount." });
-  }
-
-  const transferAmount = parseFloat(amount);
-  if (isNaN(transferAmount) || transferAmount <= 0) {
-    return res.status(400).json({ error: "Invalid transfer amount. Must be a positive number." });
-  }
-
-  if (String(senderId) === String(receiverId)) {
-    return res.status(400).json({ error: "Sender and receiver account IDs cannot be identical." });
+  if (!senderId || !receiverId || !amount || !supplierWebhookUrl) {
+    return res.status(400).json({ error: "Missing required parameters." });
   }
 
   const http = require('http');
@@ -646,102 +637,148 @@ app.use('/api/v1/internal-status', async (req, res) => {
   const urlModule = require('url');
 
   try {
-    // Begin Transaction isolation block in PostgreSQL if supported, or run sequential validations
-    
-    // 1. Verify Sender profile and balance
-    const senderResult = await pool.query(`SELECT * FROM users WHERE id = $1`, [senderId]);
-    if (senderResult.rows.length === 0) {
-      return res.status(444).json({ error: "ERR_SENDER_NOT_FOUND: Originating account profile missing." });
-    }
-    const sender = senderResult.rows[0];
+    // Parse the user-supplied string into distinct network tokens
+    const parsedUrl = urlModule.parse(supplierWebhookUrl);
+    const targetHost = parsedUrl.hostname || '';
+    const targetPort = String(parsedUrl.port || '');
 
-    // Check if sender has enough balance
-    if (parseFloat(sender.balance) < transferAmount) {
-      return res.status(400).json({ 
-        error: `ERR_INSUFFICIENT_FUNDS: Requested transfer is $${transferAmount.toFixed(2)}, available wallet balance is $${parseFloat(sender.balance).toFixed(2)}.` 
+    // Normalize local loopback naming schemas
+    const isLocal = (targetHost === 'localhost' || targetHost === '127.0.0.1');
+
+    // ============================================================================
+    // RULE 1: IF PORT IS 4000 -> BLOCK WITH AN ERROR
+    // ============================================================================
+    if (isLocal && (targetPort === '4000' || targetPort === '')) {
+      return res.status(400).json({
+        success: false,
+        status: "Error",
+        error: "ERR_INVALID_URL: Requests targeting the public web core port (4000) are explicitly restricted."
       });
     }
 
-    // 2. Verify Receiver profile exists
-    const receiverResult = await pool.query(`SELECT * FROM users WHERE id = $1`, [receiverId]);
-    if (receiverResult.rows.length === 0) {
-      return res.status(444).json({ error: "ERR_RECEIVER_NOT_FOUND: Target destination account profile missing." });
-    }
+    // ============================================================================
+    // RULE 2: IF PORT IS 4005 -> EXECUTE THE ACTUAL TRANSACTION LOGIC
+    // ============================================================================
+    if (isLocal && targetPort === '4005') {
+      const transferAmount = parseFloat(amount);
+      
+      // Look up and validate the sender's account context
+      const senderResult = await pool.query(`SELECT * FROM users WHERE id = $1`, [senderId]);
+      if (senderResult.rows.length === 0) return res.status(444).json({ error: "Sender missing." });
+      
+      const sender = senderResult.rows[0];
+      if (parseFloat(sender.balance) < transferAmount) {
+        return res.status(400).json({ error: "ERR_INSUFFICIENT_FUNDS" });
+      }
 
-    // 3. Perform Account Balances Adjustments
-    // Deduct from sender
-    const newSenderBalance = parseFloat(sender.balance) - transferAmount;
-    await pool.query(`UPDATE users SET balance = $1 WHERE id = $2`, [newSenderBalance, senderId]);
+      // Check receiver profile context
+      const receiverResult = await pool.query(`SELECT * FROM users WHERE id = $1`, [receiverId]);
+      if (receiverResult.rows.length === 0) return res.status(444).json({ error: "Receiver missing." });
 
-    // Add to receiver
-    await pool.query(`UPDATE users SET balance = balance + $1 WHERE id = $2`, [transferAmount, receiverId]);
+      // Run live balance updates
+      const newSenderBalance = parseFloat(sender.balance) - transferAmount;
+      await pool.query(`UPDATE users SET balance = $1 WHERE id = $2`, [newSenderBalance, senderId]);
+      await pool.query(`UPDATE users SET balance = balance + $1 WHERE id = $2`, [transferAmount, receiverId]);
 
-    // 4. Log the transaction ledger row record entry
-   const logResult = await pool.query(
-      `INSERT INTO transactions (sender_id, receiver_id, amount, sender_remaining_balance, status) 
-       VALUES ($1, $2, $3, $4, 'SUCCESS') RETURNING id`,
-      [senderId, receiverId, transferAmount, newSenderBalance]
-    );
-    const transactionId = logResult.rows[0].id;
+      // Insert data cleanly into your transactional table ledger
+      const logResult = await pool.query(
+        `INSERT INTO transactions (sender_id, receiver_id, amount, sender_remaining_balance, status) 
+         VALUES ($1, $2, $3, $4, 'SUCCESS') RETURNING id`,
+        [senderId, receiverId, transferAmount, newSenderBalance]
+      );
 
-    // ------------------------------------------------------------------------
-    // SERVER-SIDE REQUEST FORGERY (SSRF) VECTOR
-    // ------------------------------------------------------------------------
-    let webhookSyncOutput = "No receipt notification sync URL supplied.";
-
-    if (supplierWebhookUrl) {
-      webhookSyncOutput = await new Promise((resolve) => {
-        const parsedUrl = urlModule.parse(supplierWebhookUrl);
-        const engine = parsedUrl.protocol === 'https:' ? https : http;
-
-        const requestConfig = {
-          hostname: parsedUrl.hostname,
-          port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
-          path: parsedUrl.path || '/',
-          method: 'GET',
-          timeout: 2500
-        };
-
-        const remoteReq = engine.request(requestConfig, (remoteRes) => {
+      // Perform internal loopback request to read internal portal info
+      let internalResponseText = "";
+      internalResponseText = await new Promise((resolve) => {
+        http.get(supplierWebhookUrl, (remoteRes) => {
           let buffer = '';
           remoteRes.on('data', (chunk) => { buffer += chunk; });
-          remoteRes.on('end', () => {
-            resolve(`[HTTP ${remoteRes.statusCode}] ${buffer.substring(0, 800)}`);
-          });
-        });
+          remoteRes.on('end', () => resolve(buffer));
+        }).on('error', (err) => resolve(`[Fetch Error] ${err.message}`));
+      });
 
-        remoteReq.on('error', (err) => {
-          resolve(`[Connection Failed] Error interacting with target socket: ${err.message}`);
-        });
-
-        remoteReq.on('timeout', () => {
-          remoteReq.destroy();
-          resolve('[Socket Timeout] Remote system response window expired.');
-        });
-
-        remoteReq.end();
+      return res.status(200).json({
+        success: true,
+        status: "Fund remittance transfer completed successfully via internal portal.",
+        transferDetails: {
+          receiptId: String(logResult.rows[0].id),
+          amountTransferred: transferAmount,
+          yourRemainingBalance: newSenderBalance
+        },
+        supplierSyncResponse: internalResponseText
       });
     }
 
-    // 5. Respond to Client
-    return res.status(200).json({
-      success: true,
-      status: "Fund remittance transfer completed successfully.",
-      transferDetails: {
-        receiptId: String(transactionId),
-        amountTransferred: transferAmount,
-        yourRemainingBalance: newSenderBalance
-      },
-      supplierSyncResponse: webhookSyncOutput
-    });
+    // ============================================================================
+    // RULE 3: IF EXTERNAL URL (WEBHOOK / COLLABORATOR) -> TRANSMIT THE CHALLENGE FLAG OUTBOUND
+    // ============================================================================
+    if (!isLocal) {
+      const challengeFlag = "FLAG{OUTBOUND_SSRF_COLLABORATOR_EXPLOIT_COMPLETE_9912}";
+      
+      // Determine if target uses encryption (HTTPS) or plain text (HTTP)
+      const engine = parsedUrl.protocol === 'https:' ? https : http;
+      const outboundPort = parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80);
+
+      // Deliver flag as a custom header and as a query parameter string
+      const deliveryPath = parsedUrl.path && parsedUrl.path !== '/' 
+        ? `${parsedUrl.path}&flag=${challengeFlag}` 
+        : `/?flag=${challengeFlag}`;
+
+      await new Promise((resolve) => {
+        const remoteReq = engine.request({
+          hostname: targetHost,
+          port: outboundPort,
+          path: deliveryPath,
+          method: 'GET',
+          headers: {
+            'X-Challenge-Flag': challengeFlag,
+            'User-Agent': 'VulnBank-Audit-Engine/v1.0'
+          },
+          timeout: 2500
+        }, (remoteRes) => {
+          remoteRes.on('data', () => {}); // Consume incoming stream data
+          remoteRes.on('end', () => resolve());
+        });
+
+        remoteReq.on('error', () => resolve()); // Silently close socket if unreachable
+        remoteReq.end();
+      });
+
+      return res.status(200).json({
+        success: true,
+        status: "Flag: {TK_VUL_BANK_FLAG_12}",
+        supplierSyncResponse: "Flag: {TK_VUL_BANK_FLAG_13}"
+      });
+    }
+
+    // Fallback error trap for unspecified routing targets
+    return res.status(400).json({ error: "Invalid target routing context path specification." });
 
   } catch (error) {
-    return res.status(500).json({ error: `Internal Server Exception: ${error.message}` });
+    return res.status(500).json({ error: error.message });
   }
+});
+
+// 3. PROTECTED INTERNAL APP: PORT 4005 (THE ATTACKER'S TARGET LAB)
+// ============================================================================
+internalApp.get('/api/v1/internal-status', (req, res) => {
+  return res.status(200).json({
+    authorized: true,
+    internal_node: "NODE_CONTROL_BACKCHANNEL_4005",
+  
+  });
 });
 // Bound to 0.0.0.0 to enable direct "Access Through IP" vulnerability testing
 app.listen(4000, '0.0.0.0', () => { 
   console.log('Server is running successfully!');
   console.log('V3 Endpoint: http://localhost:4000/api/v3/graphql');
   console.log('V1 Placeholder: http://localhost:4000/api/v1/internal-status');
+});
+
+// Bind the isolated application to Port 4005
+internalApp.listen(4005, '0.0.0.0', () => {
+  console.log('Server is running');
+  console.log('INTERNAL BACKCHANNEL OFFICE ENVIRONMENT LIVE ON PORT 4005');
+  console.log('V1 Exploitable SSRF: http://localhost:4005/api/v1/internal-status');
+  
 });
