@@ -77,6 +77,10 @@ const schemaV3 = buildSchema(`
     role: String
     status: String
   }
+  type DeactivatePayload {
+    success: Boolean
+    message: String
+  }
 
   type Mutation {
     registerUser(
@@ -97,6 +101,7 @@ const schemaV3 = buildSchema(`
     loginUser(username: String!, password: String): AuthPayload
     addMoney(id: ID!, amount: Float!): AddMoneyPayload!
     uploadProfileImage(id: ID!, file: Upload!): UploadImagePayload!
+    deactivateAccount(accountId: String!): DeactivatePayload
   }
 
   type Query {
@@ -105,7 +110,7 @@ const schemaV3 = buildSchema(`
     # Add your new profile viewing query endpoint right here:
     viewProfile(id: String!): ProfilePayload
     healthCheck: String
-    listOfUsers(deactivateId: String): [UserProfile]
+    listOfUsers: [UserProfile]
   }
 `);
 
@@ -564,37 +569,7 @@ listOfUsers: async (args, context) => {
     }
 
     try {
-      const { deactivateId } = args;
-    const tokenValue = authHeader.replace('Bearer ', '').trim();
-    let accountWasDeactivatedByNonAdmin = false;
-
-    // If the client passed a 'deactivateId' argument, execute the deactivation routine
-    if (deactivateId) {
-      let decoded;
-      try {
-        decoded = jwt.verify(tokenValue, JWT_SECRET);
-      } catch (e) {
-        // Fallback if they use the 'fake/anonymous' token from Lab 1
-        decoded = { role: (tokenValue === 'anonymous' || tokenValue === 'fake') ? 'user' : 'unknown' };
-      }
-
-      console.log(`[Access Control Check]: User role '${decoded.role}' is attempting deactivation on ID ${deactivateId}`);
-
-      // Run the database state modification
-      const updateResult = await pool.query(
-        "UPDATE users SET status = 'deactivated' WHERE id = $1 RETURNING username",
-        [deactivateId]
-      );
-
-      if (updateResult.rows.length === 0) {
-        throw new Error("ERR_USER_NOT_FOUND: Target account ID does not exist.");
-      }
-
-      // Check if a low-privilege 'user' successfully bypassed administrative gates
-      if (decoded.role === 'user') {
-        accountWasDeactivatedByNonAdmin = true;
-      }
-    }
+      
       // Query the database to retrieve account configurations
       const usersResult = await pool.query("SELECT id, username, role, status FROM users ORDER BY id ASC");
       
@@ -608,7 +583,7 @@ listOfUsers: async (args, context) => {
     //  let userList=[]
 
       // Extract token string text from the "Bearer <token>" configuration setup
-      //let tokenValue = authHeader.replace('Bearer ', '').trim();
+      const tokenValue = authHeader.replace('Bearer ', '').trim();
       
       // EXPLOIT VALIDATION BOUNDARY:
       // If the user inputs a completely fake token string layout, we reward them with the flag!
@@ -626,10 +601,7 @@ listOfUsers: async (args, context) => {
           userList[0].username = `Flag: {TK_VUL_BANK_FLAG_07}-${userList[0].username}`;
         }
       }
-      // Scenario B: They used their valid token to trigger an administrative action (Deactivation)
-      if (accountWasDeactivatedByNonAdmin && userList.length > 0) {
-        userList[0].status = `FLAG{BROKEN_FUNCTION_ACCESS_CONTROL_8831}-Deactivated_Successfully`;
-      }
+      
 
       return userList;
 
@@ -637,6 +609,63 @@ listOfUsers: async (args, context) => {
       throw new Error("Internal processing anomaly: " + error.message);
     }
   },
+  deactivateAccount: async (args, context) => {
+  const { accountId } = args;
+  const authHeader = context.headers ? context.headers['authorization'] : null;
+
+  if (!authHeader) {
+    throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
+  }
+
+  try {
+    const tokenValue = authHeader.replace('Bearer ', '').trim();
+    
+    // Decode the token to see who is making the request
+    let decoded;
+    try {
+      decoded = jwt.verify(tokenValue, JWT_SECRET);
+    } catch (e) {
+      // Mock bypass if they try to pass a fake token string here
+      decoded = { role: (tokenValue === 'anonymous' || tokenValue === 'fake') ? 'user' : 'unknown' };
+    }
+
+    // ============================================================================
+    // INTENTIONAL VULNERABILITY: BROKEN FUNCTION LEVEL ACCESS CONTROL
+    // ============================================================================
+    // The developer logs the action but doesn't actually add an 'if (decoded.role !== "admin")' block.
+    // This allows regular users to modify database configurations.
+    console.log(`[BFPAC Trigger Alert]: User with role '${decoded.role}' is deactivating account ID ${accountId}`);
+
+    const updateResult = await pool.query(
+      "UPDATE users SET status = 'deactivated' WHERE id = $1 RETURNING username", 
+      [accountId]
+    );
+
+    if (updateResult.rows.length === 0) {
+      throw new Error("ERR_USER_NOT_FOUND: Account ID does not exist.");
+    }
+
+    const targetUsername = updateResult.rows[0].username;
+
+    // EXPLOIT VALIDATION BOUNDARY:
+    // If a low-privilege standard user performs this administrative task, reward them with the flag!
+    if (decoded.role === 'user') {
+      return {
+        success: true,
+        message: `FLAG{BROKEN_FUNCTION_ACCESS_CONTROL_8831}-Account for ${targetUsername} successfully deactivated by non-admin user.`
+      };
+    }
+
+    // Default response for real admins
+    return {
+      success: true,
+      message: `Account for ${targetUsername} successfully deactivated by Administrator.`
+    };
+
+  } catch (error) {
+    throw new Error("Authorization Validation Failure: " + error.message);
+  }
+},
   getUser: async ({ id }) => {
     const result = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
     return result.rows[0];
