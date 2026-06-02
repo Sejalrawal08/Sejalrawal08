@@ -89,7 +89,7 @@ const schemaV3 = buildSchema(`
       cibil_score: Int,
       salary: Float
     ): User
-    loginUser(username: String!, password: String!): AuthPayload
+    loginUser(username: String!, password: String): AuthPayload
     addMoney(id: ID!, amount: Float!): AddMoneyPayload!
     uploadProfileImage(id: ID!, file: Upload!): UploadImagePayload!
   }
@@ -222,6 +222,29 @@ const rootV3 = {
       }
 
       let dbUser = userCheckResult.rows[0];
+      // [NEW VULNERABILITY: BROKEN AUTHENTICATION VIA PARAMETER OMISSION]
+      // =================================================================
+      // If the player drops 'password' from the GraphQL variables, password is undefined.
+      // We process this block BEFORE calling .includes() to avoid a system crash.
+      if (password === undefined || password === null) {
+        console.log(`[Broken Auth Lab Triggered]: Bypassing authentication entirely via password parameter omission.`);
+        
+        // Generate a compromised token for the bypassed account access
+        const brokenAuthToken = jwt.sign(
+          { userId: dbUser.id, role: dbUser.role, authMethod: 'omission_bypass' },
+          JWT_SECRET,
+          { expiresIn: '1h' }
+        );
+
+        return {
+          id: String(dbUser.id),
+          username: dbUser.username,
+          role: dbUser.role,
+          status: dbUser.status,
+          // Dropping your brand new Broken Authentication Flag string here!
+          token: `Flag: {TK_VUL_BANK_FLAG_15}-${brokenAuthToken}`
+        };
+      }
 
       // =================================================================
       // PASSWORD VALIDATION ENGINE (SUPPORTING AUTH-BYPASS & BCRYPT)
@@ -256,7 +279,7 @@ const rootV3 = {
         username: dbUser.username,
         role: dbUser.role,
         status: dbUser.status,
-        token: realToken
+        token: `Flag: {TK_VUL_BANK_FLAG_05}-${realToken}`
       };
 
     } catch (error) {
