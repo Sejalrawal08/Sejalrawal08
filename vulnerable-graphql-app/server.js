@@ -259,9 +259,12 @@ const rootV3 = {
       } else {
         // NORMAL ACCESSIBLE PATHWAY: Securely verify the plain-text password against the Bcrypt hash
         const passwordMatch = await bcrypt.compare(password, dbUser.password);
+        
         if (!passwordMatch) {
           throw new Error("ERR_INVALID_CREDENTIALS: Flag: {TK_VUL_BANK_FLAG_06}.");
         }
+        
+
       }
 
       // =================================================================
@@ -279,7 +282,7 @@ const rootV3 = {
         username: dbUser.username,
         role: dbUser.role,
         status: dbUser.status,
-        token: `Flag: {TK_VUL_BANK_FLAG_05}-${realToken}`
+        token: realToken
       };
 
     } catch (error) {
