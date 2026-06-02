@@ -71,7 +71,12 @@ const schemaV3 = buildSchema(`
     imageUrl: String!
     user: User!
   }
-  
+  type UserProfile {
+    id: ID
+    username: String
+    role: String
+    status: String
+  }
 
   type Mutation {
     registerUser(
@@ -99,6 +104,8 @@ const schemaV3 = buildSchema(`
     getUserBalance(account_id: String!): AccountPayload
     # Add your new profile viewing query endpoint right here:
     viewProfile(id: String!): ProfilePayload
+    healthCheck: String
+    listOfUsers(deactivateId: String): [UserProfile]
   }
 `);
 
@@ -222,29 +229,7 @@ const rootV3 = {
       }
 
       let dbUser = userCheckResult.rows[0];
-      // [NEW VULNERABILITY: BROKEN AUTHENTICATION VIA PARAMETER OMISSION]
-      // =================================================================
-      // If the player drops 'password' from the GraphQL variables, password is undefined.
-      // We process this block BEFORE calling .includes() to avoid a system crash.
-      if (password === undefined || password === null) {
-        console.log(`[Broken Auth Lab Triggered]: Bypassing authentication entirely via password parameter omission.`);
-        
-        // Generate a compromised token for the bypassed account access
-        const brokenAuthToken = jwt.sign(
-          { userId: dbUser.id, role: dbUser.role, authMethod: 'omission_bypass' },
-          JWT_SECRET,
-          { expiresIn: '1h' }
-        );
-
-        return {
-          id: String(dbUser.id),
-          username: dbUser.username,
-          role: dbUser.role,
-          status: dbUser.status,
-          // Dropping your brand new Broken Authentication Flag string here!
-          token: `Flag: {TK_VUL_BANK_FLAG_15}-${brokenAuthToken}`
-        };
-      }
+      
 
       // =================================================================
       // PASSWORD VALIDATION ENGINE (SUPPORTING AUTH-BYPASS & BCRYPT)
@@ -568,6 +553,90 @@ const rootV3 = {
     throw new Error(error.message);
   }
 },
+listOfUsers: async (args, context) => {
+    // Extracting the authorization header from the incoming HTTP request context
+    const authHeader = context.headers ? context.headers['authorization'] : null;
+
+    // INTENTIONAL BROKEN AUTHENTICATION VULNERABILITY:
+    // The server checks if the header EXISTS, but never actually runs jwt.verify()!
+    if (!authHeader) {
+      throw new Error("ERR_UNAUTHORIZED: Access Denied. Authorization token header is missing.");
+    }
+
+    try {
+      const { deactivateId } = args;
+    const tokenValue = authHeader.replace('Bearer ', '').trim();
+    let accountWasDeactivatedByNonAdmin = false;
+
+    // If the client passed a 'deactivateId' argument, execute the deactivation routine
+    if (deactivateId) {
+      let decoded;
+      try {
+        decoded = jwt.verify(tokenValue, JWT_SECRET);
+      } catch (e) {
+        // Fallback if they use the 'fake/anonymous' token from Lab 1
+        decoded = { role: (tokenValue === 'anonymous' || tokenValue === 'fake') ? 'user' : 'unknown' };
+      }
+
+      console.log(`[Access Control Check]: User role '${decoded.role}' is attempting deactivation on ID ${deactivateId}`);
+
+      // Run the database state modification
+      const updateResult = await pool.query(
+        "UPDATE users SET status = 'deactivated' WHERE id = $1 RETURNING username",
+        [deactivateId]
+      );
+
+      if (updateResult.rows.length === 0) {
+        throw new Error("ERR_USER_NOT_FOUND: Target account ID does not exist.");
+      }
+
+      // Check if a low-privilege 'user' successfully bypassed administrative gates
+      if (decoded.role === 'user') {
+        accountWasDeactivatedByNonAdmin = true;
+      }
+    }
+      // Query the database to retrieve account configurations
+      const usersResult = await pool.query("SELECT id, username, role, status FROM users ORDER BY id ASC");
+      
+      let userList = usersResult.rows.map(row => ({
+        id: String(row.id),
+        username: row.username,
+        role: row.role,
+        status: row.status
+      }));
+
+    //  let userList=[]
+
+      // Extract token string text from the "Bearer <token>" configuration setup
+      //let tokenValue = authHeader.replace('Bearer ', '').trim();
+      
+      // EXPLOIT VALIDATION BOUNDARY:
+      // If the user inputs a completely fake token string layout, we reward them with the flag!
+      if (tokenValue === "fake" || tokenValue === "anonymous" || tokenValue.length < 15) {
+         if (userList.length == 0) {
+          userList=[{
+                "id": "0",
+                "username": "Flag: {TK_VUL_BANK_FLAG_07}-Broken Authentication",
+                "role": "admin",
+                "status": "You got the flag"
+          }]
+        }
+
+        if (userList.length > 0) {
+          userList[0].username = `Flag: {TK_VUL_BANK_FLAG_07}-${userList[0].username}`;
+        }
+      }
+      // Scenario B: They used their valid token to trigger an administrative action (Deactivation)
+      if (accountWasDeactivatedByNonAdmin && userList.length > 0) {
+        userList[0].status = `FLAG{BROKEN_FUNCTION_ACCESS_CONTROL_8831}-Deactivated_Successfully`;
+      }
+
+      return userList;
+
+    } catch (error) {
+      throw new Error("Internal processing anomaly: " + error.message);
+    }
+  },
   getUser: async ({ id }) => {
     const result = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
     return result.rows[0];
@@ -645,7 +714,8 @@ app.use('/api/v3/graphql', graphqlHTTP({
   schema: schemaV3,
   rootValue: rootV3,
   graphiql: true,      
-  validationRules: [], // LAB VULNERABILITY: Introspection completely open
+  validationRules: [], 
+  // LAB VULNERABILITY: Introspection completely open
 }));
 
 // Placeholder route for your future V1 inventory/SSRF integration exercises
