@@ -81,6 +81,15 @@ const schemaV3 = buildSchema(`
     success: Boolean
     message: String
   }
+  type SipPlan {
+    id: ID
+    sipName: String
+    amount: Int
+    tenure: Int
+    sipType: String
+    ownerId: String
+    message: String
+  }
 
   type Mutation {
     registerUser(
@@ -102,6 +111,8 @@ const schemaV3 = buildSchema(`
     addMoney(id: ID!, amount: Float!): AddMoneyPayload!
     uploadProfileImage(id: ID!, file: Upload!): UploadImagePayload!
     deactivateAccount(accountId: String!): DeactivatePayload
+    activateAccount(accountId: String!): DeactivatePayload
+    createSip(sipName: String!, amount: Int!, tenure: Int!, sipType: String!): SipPlan
   }
 
   type Query {
@@ -111,6 +122,7 @@ const schemaV3 = buildSchema(`
     viewProfile(id: String!): ProfilePayload
     healthCheck: String
     listOfUsers: [UserProfile]
+    viewSip(sipId: Int!): SipPlan
   }
 `);
 
@@ -652,7 +664,7 @@ listOfUsers: async (args, context) => {
     if (decoded.role === 'user') {
       return {
         success: true,
-        message: `FLAG{BROKEN_FUNCTION_ACCESS_CONTROL_8831}-Account for ${targetUsername} successfully deactivated by non-admin user.`
+        message: `Flag: {TK_VUL_BANK_FLAG_08}-Account for ${targetUsername} successfully deactivated by non-admin user.`
       };
     }
 
@@ -664,6 +676,172 @@ listOfUsers: async (args, context) => {
 
   } catch (error) {
     throw new Error("Authorization Validation Failure: " + error.message);
+  }
+},
+activateAccount: async (args, context) => {
+  const { accountId } = args;
+  const authHeader = context.headers ? context.headers['authorization'] : null;
+
+  if (!authHeader) {
+    throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
+  }
+
+  try {
+    const tokenValue = authHeader.replace('Bearer ', '').trim();
+    
+    // Decode the token to identify the user
+    let decoded;
+    try {
+      decoded = jwt.verify(tokenValue, JWT_SECRET);
+    } catch (e) {
+      decoded = { role: (tokenValue === 'anonymous' || tokenValue === 'fake') ? 'user' : 'unknown' };
+    }
+
+    // ============================================================================
+    // REPEATED INTENTIONAL VULNERABILITY: BROKEN FUNCTION LEVEL ACCESS CONTROL
+    // ============================================================================
+    // The activation routine also fails to validate if decoded.role === 'admin'.
+    console.log(`[BFPAC Trigger Alert]: User with role '${decoded.role}' is activating account ID ${accountId}`);
+
+    // Update the database status column back to 'active'
+    const updateResult = await pool.query(
+      "UPDATE users SET status = 'active' WHERE id = $1 RETURNING username", 
+      [accountId]
+    );
+
+    if (updateResult.rows.length === 0) {
+      throw new Error("ERR_USER_NOT_FOUND: Account ID does not exist.");
+    }
+
+    const targetUsername = updateResult.rows[0].username;
+
+    // EXPLOIT VALIDATION BOUNDARY:
+    // If a low-privilege standard user performs this administrative task, reward them with the flag!
+    if (decoded.role === 'user') {
+      return {
+        success: true,
+        message: `Flag: {TK_VUL_BANK_FLAG_08}-Account for ${targetUsername} successfully restored to active by non-admin user.`
+      };
+    }
+
+    // Default response for real admins
+    return {
+      success: true,
+      message: `Account for ${targetUsername} successfully activated by Administrator.`
+    };
+
+  } catch (error) {
+    throw new Error("Authorization Validation Failure: " + error.message);
+  }
+},
+// ============================================================================
+// FEATURE 1: CREATE SIP ENDPOINT (Business Logic / Parameter Tampering Flaw)
+// ============================================================================
+createSip: async (args, context) => {
+  const { sipName, amount, tenure, sipType } = args;
+  const authHeader = context.headers ? context.headers['authorization'] : null;
+
+  if (!authHeader) {
+    throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
+  }
+
+  try {
+    const tokenValue = authHeader.replace('Bearer ', '').trim();
+    const decoded = jwt.verify(tokenValue, JWT_SECRET);
+
+    // ============================================================================
+    // CRITICAL DEBUG LOG: This will print the token contents to your terminal!
+    // ============================================================================
+    console.log("========================================");
+    console.log("[SIP DEBUG] Your Decoded Token Payload is:", decoded);
+    console.log("========================================");
+
+    // We fallback, but if it's still missing, let's explicitly look for common custom keys
+    //const actualUserId = decoded.id || decoded.userId || decoded.user_id || decoded.sub;
+    const actualUserId = decoded.id || decoded.userId || decoded.user_id;
+
+    // Check if the server is still getting absolutely nothing
+    if (!actualUserId) {
+      throw new Error(`Token properties are missing a user identification key. Keys present: ${Object.keys(decoded).join(', ')}`);
+    }
+
+    console.log(`[SIP Create Audit]: User ID ${actualUserId} is creating a ${sipType} tier plan.`);
+
+    const insertResult = await pool.query(
+      `INSERT INTO sips (sip_name, amount, tenure, sip_type, user_id) 
+       VALUES ($1, $2, $3, $4, $5) RETURNING id, sip_name, amount, tenure, sip_type, user_id`,
+      [sipName, amount, tenure, sipType, actualUserId]
+    );
+
+    const newSip = insertResult.rows[0];
+    let customMessage = "SIP Created Successfully.";
+
+    if (sipType.toLowerCase() === 'gold') {
+      customMessage = `Flag: {TK_VUL_BANK_FLAG_11}}-Premium Gold tier provisioned without verification.`;
+    }
+
+    return {
+      id: newSip.id,
+      sipName: newSip.sip_name,
+      amount: newSip.amount,
+      tenure: newSip.tenure,
+      sipType: newSip.sip_type,
+      userId: newSip.user_id,
+      message: customMessage
+    };
+
+  } catch (error) {
+    throw new Error("Creation Processing Failure: " + error.message);
+  }
+},
+
+// ============================================================================
+// FEATURE 2: VIEW SIP ENDPOINT (Insecure Direct Object Reference / IDOR Flaw)
+// ============================================================================
+viewSip: async (args, context) => {
+  const { sipId } = args;
+  const authHeader = context.headers ? context.headers['authorization'] : null;
+
+  if (!authHeader) {
+    throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
+  }
+
+  try {
+    const tokenValue = authHeader.replace('Bearer ', '').trim();
+    // Validate the token so the route still requires a login, but don't force ownership constraints
+    const decoded = jwt.verify(tokenValue, JWT_SECRET); 
+
+    // INTENTIONAL IDOR: We only search by the record ID ($1)
+    const sipResult = await pool.query(
+      "SELECT id, sip_name, amount, tenure, sip_type, user_id FROM sips WHERE id = $1", 
+      [sipId]
+    );
+
+    if (sipResult.rows.length === 0) {
+      throw new Error("SIP record not found.");
+    }
+
+    const sipData = sipResult.rows[0];
+
+    // --- FLAG LOGIC FOR YOUR CTF ---
+    // If a user successfully accesses a record that doesn't belong to them, serve the flag!
+    let responseMessage = "Data fetched safely.";
+    
+    const actualUserId = decoded.id || decoded.userId || decoded.user_id;
+    if (sipData.user_id !== actualUserId) {
+      responseMessage = `Flag: {TK_VUL_BANK_FLAG_15} Flag: {TK_VUL_BANK_FLAG_09}-Sideways data leak successful.`;
+    }
+
+    return {
+      id: sipData.id,
+      sipName: sipData.sip_name,
+      sipType: sipData.sip_type,
+      ownerId: sipData.user_id, 
+      message: responseMessage
+    };
+
+  } catch (error) {
+    throw new Error("Query Engine Failure: " + error.message);
   }
 },
   getUser: async ({ id }) => {
