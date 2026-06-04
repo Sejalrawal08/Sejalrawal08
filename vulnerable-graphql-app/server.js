@@ -121,7 +121,7 @@ const schemaV3 = buildSchema(`
     deactivateAccount(accountId: String!): DeactivatePayload
     activateAccount(accountId: String!): DeactivatePayload
     createSip(sipName: String!, amount: Int!, tenure: Int!, sipType: String!): SipPlan
-    createLoan(accountId: Int!, amount: Int!, salary: Int!, options: String!): LoanResult
+    createLoan(accountId: Int!, amount: Int!, salary: Int!, options: String): LoanResult
   
   }
 
@@ -922,9 +922,10 @@ viewSip: async (args, context) => {
   }
 },
 createLoan: async (args, context) => {
-  const { accountId, amount, salary, options } = args;
+  // If 'options' is completely missing from the query, it defaults to an empty string structure "{}"
+  const { accountId, amount, salary, options = "{}" } = args;
   
-  // 1. Authenticate the incoming request session
+  // 1. Authenticate the incoming request session via JWT token
   const authHeader = context.headers ? context.headers['authorization'] : null;
   if (!authHeader) {
     throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
@@ -933,12 +934,14 @@ createLoan: async (args, context) => {
   try {
     const tokenValue = authHeader.replace('Bearer ', '').trim();
     const decoded = jwt.verify(tokenValue, JWT_SECRET);
+    
+    // Extract the identity of the logged-in user from the verified JWT
     const actualUserId = decoded.id || decoded.userId || decoded.user_id;
 
     // 2. Safely parse the incoming string parameter configuration payload
     let parsedOptions = {};
     try {
-      parsedOptions = JSON.parse(options);
+      parsedOptions = JSON.parse(options || "{}");
     } catch (e) {
       throw new Error("Validation Failure: Options field must be a valid JSON string.");
     }
@@ -954,15 +957,26 @@ createLoan: async (args, context) => {
     vulnerableUnsafeMerge(loanConfig, parsedOptions);
 
     // ============================================================================
-    // 4. DYNAMIC CREDIT DATA FETCH (Replaced the hardcoded const userCibilScore = 450)
+    // 4. DYNAMIC CREDIT DATA FETCH & AUTHORIZATION OWNERSHIP CHECK
     // ============================================================================
     const accountQuery = await pool.query(
-      "SELECT cibil_score FROM public.accounts WHERE id = $1",
+      "SELECT user_id, cibil_score FROM public.accounts WHERE id = $1",
       [accountId]
     );
 
-    // Fallback default value to 450 if the specific account row record isn't found
-    const userCibilScore = accountQuery.rows.length > 0 ? accountQuery.rows[0].cibil_score : 450;
+    // If the account ID specified in the request doesn't exist in the database at all
+    if (accountQuery.rows.length === 0) {
+      throw new Error("Transaction Execution Failure: The requested account destination structure does not exist.");
+    }
+
+    const accountOwnerId = accountQuery.rows[0].user_id;
+    const userCibilScore = accountQuery.rows[0].cibil_score;
+
+    // 🔒 THE ANTI-IDOR / MULTI-TENANCY SECURITY GATE:
+    // Verify that the logged-in user ID matches the owner ID of the account being accessed!
+    if (accountOwnerId !== actualUserId) {
+      throw new Error("ERR_UNAUTHORIZED: Access Denied. You are not authorized to create a loan profile for another user's account asset layout.");
+    }
     
     let isApproved = false;
     let executionMessage = "";
@@ -972,22 +986,18 @@ createLoan: async (args, context) => {
     // ============================================================================
 
     // STAGE 1: THE ABSOLUTE CREDIT BLOCK (Normal User Workflow)
-    // If their CIBIL score is 450 or lower, it triggers an absolute rejection—regardless of salary size.
     if (userCibilScore <= 450 && loanConfig.riskAssessment.strictMode !== false && loanConfig.riskAssessment.bypassValidation !== true) {
       isApproved = false;
       executionMessage = `Loan application rejected. Your CIBIL score (${userCibilScore}) must be strictly greater than 450 to qualify.`;
     } 
     
     // STAGE 2: THE HONEST APPROVAL GATEWAY
-    // If a user has a qualifying credit history profile (> 450), they clear safely
     else if (userCibilScore > 450) {
       isApproved = true;
       executionMessage = "Loan approved successfully based on qualifying credit parameters.";
     }
     
     // STAGE 3: THE PROTOTYPE POLLUTION BYPASS FLIP
-    // If an attacker successfully infects the object base template, this fires, 
-    // forces approval parameters to true, and drops the target CTF flag.
     const isPrototypePolluted = Object.prototype.hasOwnProperty('bypassValidation') || 
                                 Object.prototype.hasOwnProperty('strictMode');
 
@@ -995,7 +1005,7 @@ createLoan: async (args, context) => {
       isApproved = true;
       executionMessage = `FLAG{PROTOTYPE_POLLUTION_BYPASS_9921}-Exploited global runtime properties to compromise validation parameters.`;
     }
-    // 5. Structure object return mapping arrays back to Postman engine
+
     return {
       id: Math.floor(Math.random() * 90000) + 10000,
       accountId: accountId,
@@ -1005,7 +1015,7 @@ createLoan: async (args, context) => {
     };
 
   } catch (error) {
-    if (error.message.includes("Validation Failure")) {
+    if (error.message.includes("Validation Failure") || error.message.includes("ERR_UNAUTHORIZED")) {
       throw error;
     }
     throw new Error("Loan Processing Engine Error: " + error.message);
