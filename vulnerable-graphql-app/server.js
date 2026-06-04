@@ -924,6 +924,7 @@ viewSip: async (args, context) => {
 createLoan: async (args, context) => {
   const { accountId, amount, salary, options } = args;
   
+  // 1. Authenticate the incoming request session
   const authHeader = context.headers ? context.headers['authorization'] : null;
   if (!authHeader) {
     throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
@@ -934,7 +935,7 @@ createLoan: async (args, context) => {
     const decoded = jwt.verify(tokenValue, JWT_SECRET);
     const actualUserId = decoded.id || decoded.userId || decoded.user_id;
 
-    // 1. Parse the student-supplied options object (Where the payload lives)
+    // 2. Safely parse the incoming string parameter configuration payload
     let parsedOptions = {};
     try {
       parsedOptions = JSON.parse(options);
@@ -942,43 +943,61 @@ createLoan: async (args, context) => {
       throw new Error("Validation Failure: Options field must be a valid JSON string.");
     }
 
-    // 2. Define a clean local settings layout configuration
+    // 3. Define the baseline secure setup configuration schema framework
     let loanConfig = {
       riskAssessment: {
         strictMode: true
       }
     };
 
-    // 🔴 TRIGGER THE PROTOTYPE POLLUTION
-    // If parsedOptions contains {"__proto__": {"strictMode": false}}, 
-    // this line modifies the global Object prototype directly!
+    // 🔴 THE VULNERABILITY MECHANISM: Run the unsafe merger to allow prototype pollution
     vulnerableUnsafeMerge(loanConfig, parsedOptions);
 
-    // 3. Simulate Fetching a Weak CIBIL Score
-    // For this lab scenario, let's assume this user's credit score is poor (e.g., 450)
-    const userCibilScore = 450; 
+    // ============================================================================
+    // 4. DYNAMIC CREDIT DATA FETCH (Replaced the hardcoded const userCibilScore = 450)
+    // ============================================================================
+    const accountQuery = await pool.query(
+      "SELECT cibil_score FROM public.accounts WHERE id = $1",
+      [accountId]
+    );
+
+    // Fallback default value to 450 if the specific account row record isn't found
+    const userCibilScore = accountQuery.rows.length > 0 ? accountQuery.rows[0].cibil_score : 450;
+    
     let isApproved = false;
-    let executionMessage = "Loan application rejected due to a low credit score.";
+    let executionMessage = "";
 
-    // 4. THE LOAN APPROVAL VALIDATION BLOCK
-    // Secure logic checks if the score is healthy.
-    if (userCibilScore >= 750) {
-      isApproved = true;
-      executionMessage = "Loan approved successfully based on strong credit criteria.";
+    // ============================================================================
+    // THE ULTIMATE EVALUATION PIPELINE
+    // ============================================================================
+
+    // STAGE 1: THE ABSOLUTE CREDIT BLOCK (Normal User Workflow)
+    // If their CIBIL score is 450 or lower, it triggers an absolute rejection—regardless of salary size.
+    if (userCibilScore <= 450 && loanConfig.riskAssessment.strictMode !== false && loanConfig.riskAssessment.bypassValidation !== true) {
+      isApproved = false;
+      executionMessage = `Loan application rejected. Your CIBIL score (${userCibilScore}) must be strictly greater than 450 to qualify.`;
     } 
-    // VULNERABLE CHECK: It reads 'strictMode' from the config object.
-    // If loanConfig.riskAssessment.strictMode was polluted to false globally, 
-    // or if the check falls back to a polluted property on the root object, we bypass this validation!
-    else if (loanConfig.riskAssessment.strictMode === false || Object.prototype.bypassCibil === true) {
+    
+    // STAGE 2: THE HONEST APPROVAL GATEWAY
+    // If a user has a qualifying credit history profile (> 450), they clear safely
+    else if (userCibilScore > 450) {
       isApproved = true;
-      executionMessage = `Flag: {TK_VUL_BANK_FLAG_17}-Exploited global runtime properties to compromise validation parameters.`;
+      executionMessage = "Loan approved successfully based on qualifying credit parameters.";
     }
+    
+    // STAGE 3: THE PROTOTYPE POLLUTION BYPASS FLIP
+    // If an attacker successfully infects the object base template, this fires, 
+    // forces approval parameters to true, and drops the target CTF flag.
+    const isPrototypePolluted = Object.prototype.hasOwnProperty('bypassValidation') || 
+                                Object.prototype.hasOwnProperty('strictMode');
 
-    // 5. If approved, write it into a database tracking table (Optional/Simulated here)
-    let savedId = Math.floor(Math.random() * 1000); 
-
+    if (isPrototypePolluted || loanConfig.riskAssessment.bypassValidation === true) {
+      isApproved = true;
+      executionMessage = `FLAG{PROTOTYPE_POLLUTION_BYPASS_9921}-Exploited global runtime properties to compromise validation parameters.`;
+    }
+    // 5. Structure object return mapping arrays back to Postman engine
     return {
-      id: savedId,
+      id: Math.floor(Math.random() * 90000) + 10000,
       accountId: accountId,
       loanAmount: amount,
       approved: isApproved,
@@ -986,6 +1005,9 @@ createLoan: async (args, context) => {
     };
 
   } catch (error) {
+    if (error.message.includes("Validation Failure")) {
+      throw error;
+    }
     throw new Error("Loan Processing Engine Error: " + error.message);
   }
 },
