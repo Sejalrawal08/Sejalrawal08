@@ -89,6 +89,14 @@ const schemaV3 = buildSchema(`
     sipType: String
     ownerId: String
     message: String
+    sipCount: Float     
+  }
+  type LoanResult {
+    id: ID
+    accountId: Int
+    loanAmount: Int
+    approved: Boolean
+    message: String
   }
 
   type Mutation {
@@ -113,6 +121,8 @@ const schemaV3 = buildSchema(`
     deactivateAccount(accountId: String!): DeactivatePayload
     activateAccount(accountId: String!): DeactivatePayload
     createSip(sipName: String!, amount: Int!, tenure: Int!, sipType: String!): SipPlan
+    createLoan(accountId: Int!, amount: Int!, salary: Int!, options: String!): LoanResult
+  
   }
 
   type Query {
@@ -125,6 +135,20 @@ const schemaV3 = buildSchema(`
     viewSip(sipId: Int!): SipPlan
   }
 `);
+
+// Vulnerable helper function susceptible to Prototype Pollution
+function vulnerableUnsafeMerge(target, source) {
+  for (let key in source) {
+    if (source.hasOwnProperty(key)) {
+      if (typeof target[key] === 'object' && typeof source[key] === 'object') {
+        vulnerableUnsafeMerge(target[key], source[key]);
+      } else {
+        target[key] = source[key];
+      }
+    }
+  }
+  return target;
+}
 
 const rootV3 = {
   registerUser: async (args) => {
@@ -745,103 +769,224 @@ createSip: async (args, context) => {
     throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
   }
 
+  // Start a database client connection to handle multiple queries cleanly
+  const client = await pool.connect();
+
   try {
     const tokenValue = authHeader.replace('Bearer ', '').trim();
     const decoded = jwt.verify(tokenValue, JWT_SECRET);
-
-    // ============================================================================
-    // CRITICAL DEBUG LOG: This will print the token contents to your terminal!
-    // ============================================================================
-    console.log("========================================");
-    console.log("[SIP DEBUG] Your Decoded Token Payload is:", decoded);
-    console.log("========================================");
-
-    // We fallback, but if it's still missing, let's explicitly look for common custom keys
-    //const actualUserId = decoded.id || decoded.userId || decoded.user_id || decoded.sub;
     const actualUserId = decoded.id || decoded.userId || decoded.user_id;
 
-    // Check if the server is still getting absolutely nothing
-    if (!actualUserId) {
-      throw new Error(`Token properties are missing a user identification key. Keys present: ${Object.keys(decoded).join(', ')}`);
+    // 1. Hard validation check for negative numbers
+    if (amount <= 0) {
+      throw new Error("Validation Failure: SIP amount must be a positive number greater than zero.");
     }
 
-    console.log(`[SIP Create Audit]: User ID ${actualUserId} is creating a ${sipType} tier plan.`);
+    // Begin Database Transaction
+    await client.query('BEGIN');
 
-    const insertResult = await pool.query(
-      `INSERT INTO sips (sip_name, amount, tenure, sip_type, user_id) 
-       VALUES ($1, $2, $3, $4, $5) RETURNING id, sip_name, amount, tenure, sip_type, user_id`,
-      [sipName, amount, tenure, sipType, actualUserId]
+    // 2. Fetch the current account balance of the user dynamically from the database
+    // (Assuming a table named 'accounts' with columns 'balance' and 'user_id')
+    const accountCheck = await client.query(
+      "SELECT balance FROM accounts WHERE user_id = $1 FOR UPDATE",
+      [actualUserId]
     );
 
-    const newSip = insertResult.rows[0];
-    let customMessage = "SIP Created Successfully.";
-
-    if (sipType.toLowerCase() === 'gold') {
-      customMessage = `Flag: {TK_VUL_BANK_FLAG_11}}-Premium Gold tier provisioned without verification.`;
+    if (accountCheck.rows.length === 0) {
+      throw new Error("Query Engine Failure: User banking account record not found.");
     }
 
+    const currentBalance = accountCheck.rows[0].balance;
+    let finalSipType = sipType.toLowerCase();
+    let finalAmount = amount; 
+    let executionMessage = "SIP plan created successfully.";
+    let newBalance = 0;
+
+    // ============================================================================
+    // THE NEW BUSINESS FLOW BALANCE DEVIATION LOGIC
+    // ============================================================================
+    if (finalAmount <= currentBalance) {
+      // Scenario A: Normal purchase -> Deduct exact amount
+      newBalance = currentBalance - finalAmount;
+    } else {
+      // Scenario B: Overdraft Flow -> Drain balance completely to zero and drop the flag
+      newBalance = 0;
+      executionMessage = `Flag: {TK_VUL_BANK_FLAG_15}-Business flow failure: Allowed account overdraft transaction without balance validation.`;
+    }
+
+    // 3. Update the user's account balance table to reflect the change
+    await client.query(
+      "UPDATE accounts SET balance = $1 WHERE user_id = $2",
+      [newBalance, actualUserId]
+    );
+
+    // 4. Calculate unit counts based on your inverted tier pricing
+    const silverUnitPrice = 1000;
+    const goldUnitPrice = 500; 
+    let calculatedSipCount = (finalSipType === 'gold') ? (finalAmount / goldUnitPrice) : (finalAmount / silverUnitPrice);
+
+    // 5. Insert the new SIP record into the database
+    const newSipResult = await client.query(
+      `INSERT INTO sips (sip_name, amount, tenure, sip_type, user_id, sip_count) 
+       VALUES ($1, $2, $3, $4, $5, $6) 
+       RETURNING id, sip_name, amount, tenure, sip_type, user_id, sip_count`,
+      [sipName, finalAmount, tenure, finalSipType, actualUserId, calculatedSipCount]
+    );
+
+    // Commit changes safely to PostgreSQL
+    await client.query('COMMIT');
+
+    const savedSip = newSipResult.rows[0];
+
     return {
-      id: newSip.id,
-      sipName: newSip.sip_name,
-      amount: newSip.amount,
-      tenure: newSip.tenure,
-      sipType: newSip.sip_type,
-      userId: newSip.user_id,
-      message: customMessage
+      id: savedSip.id,
+      sipName: savedSip.sip_name,
+      amount: savedSip.amount,      
+      tenure: savedSip.tenure,
+      sipType: savedSip.sip_type,
+      ownerId: savedSip.user_id,
+      sipCount: parseFloat(savedSip.sip_count), 
+      message: executionMessage
     };
 
   } catch (error) {
-    throw new Error("Creation Processing Failure: " + error.message);
+    // If anything fails inside the try block, roll back the database modifications completely
+    await client.query('ROLLBACK');
+
+    if (error.message.includes("Validation Failure") || error.message.includes("Query Engine Failure")) {
+      throw error;
+    }
+    throw new Error("Transaction Execution Failure: " + error.message);
+  } finally {
+    // Always release the pool worker connection client
+    client.release();
   }
 },
-
 // ============================================================================
 // FEATURE 2: VIEW SIP ENDPOINT (Insecure Direct Object Reference / IDOR Flaw)
 // ============================================================================
 viewSip: async (args, context) => {
   const { sipId } = args;
+  
+  // 1. Check for Authorization header (User must still be logged in to access the endpoint)
   const authHeader = context.headers ? context.headers['authorization'] : null;
-
   if (!authHeader) {
     throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
   }
 
   try {
     const tokenValue = authHeader.replace('Bearer ', '').trim();
-    // Validate the token so the route still requires a login, but don't force ownership constraints
-    const decoded = jwt.verify(tokenValue, JWT_SECRET); 
+    const decoded = jwt.verify(tokenValue, JWT_SECRET);
+    const actualUserId = decoded.id || decoded.userId || decoded.user_id;
 
-    // INTENTIONAL IDOR: We only search by the record ID ($1)
-    const sipResult = await pool.query(
-      "SELECT id, sip_name, amount, tenure, sip_type, user_id FROM sips WHERE id = $1", 
+    // 2. Fetch the requested SIP record from the database
+    const checkSip = await pool.query(
+      "SELECT id, sip_name, amount, tenure, sip_type, user_id, sip_count FROM sips WHERE id = $1",
       [sipId]
     );
 
-    if (sipResult.rows.length === 0) {
-      throw new Error("SIP record not found.");
+    if (checkSip.rows.length === 0) {
+      throw new Error("Query Engine Failure: SIP record not found.");
     }
 
-    const sipData = sipResult.rows[0];
+    const currentSip = checkSip.rows[0];
 
-    // --- FLAG LOGIC FOR YOUR CTF ---
-    // If a user successfully accesses a record that doesn't belong to them, serve the flag!
-    let responseMessage = "Data fetched safely.";
+    // ============================================================================
+    // THE BOLA / HORIZONTAL ESCALATION FLAW
+    // ============================================================================
+    // TRADITIONAL SECURE RULE WOULD BE: if (currentSip.user_id !== actualUserId) { throw Error }
+    // Instead, we allow the query to pass, but we drop the CTF flag if they are viewing someone else's data!
     
-    const actualUserId = decoded.id || decoded.userId || decoded.user_id;
-    if (sipData.user_id !== actualUserId) {
-      responseMessage = `Flag: {TK_VUL_BANK_FLAG_15} Flag: {TK_VUL_BANK_FLAG_09}-Sideways data leak successful.`;
+    let executionMessage = "Record retrieved successfully.";
+    
+    if (currentSip.user_id !== actualUserId) {
+      executionMessage = `Flag: {TK_VUL_BANK_FLAG_16} BOLAFlag: {TK_VUL_BANK_FLAG_09}-Exploited broken object level authorization on SIP data endpoint.`;
     }
 
     return {
-      id: sipData.id,
-      sipName: sipData.sip_name,
-      sipType: sipData.sip_type,
-      ownerId: sipData.user_id, 
-      message: responseMessage
+      id: currentSip.id,
+      sipName: currentSip.sip_name,
+      amount: currentSip.amount,
+      tenure: currentSip.tenure,
+      sipType: currentSip.sip_type,
+      ownerId: currentSip.user_id, // Students will see this doesn't match their own user ID
+      sipCount: currentSip.sip_count ? parseFloat(currentSip.sip_count) : 0.00,
+      message: executionMessage
     };
 
   } catch (error) {
-    throw new Error("Query Engine Failure: " + error.message);
+    if (error.message.includes("Query Engine Failure") || error.message.includes("ERR_")) {
+      throw error;
+    }
+    throw new Error("Internal Server System Error: " + error.message);
+  }
+},
+createLoan: async (args, context) => {
+  const { accountId, amount, salary, options } = args;
+  
+  const authHeader = context.headers ? context.headers['authorization'] : null;
+  if (!authHeader) {
+    throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
+  }
+
+  try {
+    const tokenValue = authHeader.replace('Bearer ', '').trim();
+    const decoded = jwt.verify(tokenValue, JWT_SECRET);
+    const actualUserId = decoded.id || decoded.userId || decoded.user_id;
+
+    // 1. Parse the student-supplied options object (Where the payload lives)
+    let parsedOptions = {};
+    try {
+      parsedOptions = JSON.parse(options);
+    } catch (e) {
+      throw new Error("Validation Failure: Options field must be a valid JSON string.");
+    }
+
+    // 2. Define a clean local settings layout configuration
+    let loanConfig = {
+      riskAssessment: {
+        strictMode: true
+      }
+    };
+
+    // 🔴 TRIGGER THE PROTOTYPE POLLUTION
+    // If parsedOptions contains {"__proto__": {"strictMode": false}}, 
+    // this line modifies the global Object prototype directly!
+    vulnerableUnsafeMerge(loanConfig, parsedOptions);
+
+    // 3. Simulate Fetching a Weak CIBIL Score
+    // For this lab scenario, let's assume this user's credit score is poor (e.g., 450)
+    const userCibilScore = 450; 
+    let isApproved = false;
+    let executionMessage = "Loan application rejected due to a low credit score.";
+
+    // 4. THE LOAN APPROVAL VALIDATION BLOCK
+    // Secure logic checks if the score is healthy.
+    if (userCibilScore >= 750) {
+      isApproved = true;
+      executionMessage = "Loan approved successfully based on strong credit criteria.";
+    } 
+    // VULNERABLE CHECK: It reads 'strictMode' from the config object.
+    // If loanConfig.riskAssessment.strictMode was polluted to false globally, 
+    // or if the check falls back to a polluted property on the root object, we bypass this validation!
+    else if (loanConfig.riskAssessment.strictMode === false || Object.prototype.bypassCibil === true) {
+      isApproved = true;
+      executionMessage = `Flag: {TK_VUL_BANK_FLAG_17}-Exploited global runtime properties to compromise validation parameters.`;
+    }
+
+    // 5. If approved, write it into a database tracking table (Optional/Simulated here)
+    let savedId = Math.floor(Math.random() * 1000); 
+
+    return {
+      id: savedId,
+      accountId: accountId,
+      loanAmount: amount,
+      approved: isApproved,
+      message: executionMessage
+    };
+
+  } catch (error) {
+    throw new Error("Loan Processing Engine Error: " + error.message);
   }
 },
   getUser: async ({ id }) => {
