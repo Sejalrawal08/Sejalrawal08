@@ -9,6 +9,7 @@ const { exec } = require('child_process');
 const pool = require('./db');
 const fs = require('fs');
 const { graphqlUploadExpress } = require('graphql-upload-minimal');
+const crypto = require('crypto');
 
 // ==========================================
 // V3 SCHEMA & RESOLVER CONFIGURATION
@@ -98,6 +99,15 @@ const schemaV3 = buildSchema(`
     approved: Boolean
     message: String
   }
+  type UpdateCibilResult {
+    accountId: Int!
+    cibilScore: Int!
+    message: String!
+  }
+  type ResetResult {
+    success: Boolean!
+    message: String!
+  }
 
   type Mutation {
     registerUser(
@@ -121,7 +131,9 @@ const schemaV3 = buildSchema(`
     deactivateAccount(accountId: String!): DeactivatePayload
     activateAccount(accountId: String!): DeactivatePayload
     createSip(sipName: String!, amount: Int!, tenure: Int!, sipType: String!): SipPlan
-    createLoan(accountId: Int!, amount: Int!, salary: Int!, options: String): LoanResult
+    createLoan(accountId: Int!, amount: Int!, options: String): LoanResult
+    updateCibilScore(accountId: Int!, cibilScore: Int!): UpdateCibilResult
+    resetForgottenPassword(email: String!, resetToken: String!, newPassword: String!): ResetResult
   
   }
 
@@ -136,11 +148,22 @@ const schemaV3 = buildSchema(`
   }
 `);
 
-// Vulnerable helper function susceptible to Prototype Pollution
+// Updated helper function that blocks direct "__proto__" paths,
+// forcing the use of the constructor bypass layout technique.
 function vulnerableUnsafeMerge(target, source) {
   for (let key in source) {
     if (source.hasOwnProperty(key)) {
-      if (typeof target[key] === 'object' && typeof source[key] === 'object') {
+      
+      // 🔒 THE BLACKLIST DEFENSE: Blocks direct access via __proto__
+      if (key === '__proto__') {
+        continue; 
+      }
+
+      // Check if the target property exists and is either an object OR a constructor function
+      const isTargetObjectOrFunction = target[key] && (typeof target[key] === 'object' || typeof target[key] === 'function');
+      const isSourceObject = source[key] && typeof source[key] === 'object';
+
+      if (isTargetObjectOrFunction && isSourceObject) {
         vulnerableUnsafeMerge(target[key], source[key]);
       } else {
         target[key] = source[key];
@@ -922,8 +945,8 @@ viewSip: async (args, context) => {
   }
 },
 createLoan: async (args, context) => {
-  // If 'options' is completely missing from the query, it defaults to an empty string structure "{}"
-  const { accountId, amount, salary, options = "{}" } = args;
+  // 'salary' is no longer expected from the client parameters
+  const { accountId, amount, options = "{}" } = args;
   
   // 1. Authenticate the incoming request session via JWT token
   const authHeader = context.headers ? context.headers['authorization'] : null;
@@ -957,23 +980,23 @@ createLoan: async (args, context) => {
     vulnerableUnsafeMerge(loanConfig, parsedOptions);
 
     // ============================================================================
-    // 4. DYNAMIC CREDIT DATA FETCH & AUTHORIZATION OWNERSHIP CHECK
+    // 4. SECURE BACKEND DATA FETCH (Pulls Salary & CIBIL from DB)
     // ============================================================================
+    // Make sure your database table has 'salary' and 'cibil_score' columns in the accounts table
     const accountQuery = await pool.query(
-      "SELECT user_id, cibil_score FROM public.accounts WHERE id = $1",
+      "SELECT user_id, cibil_score, salary FROM public.accounts WHERE id = $1",
       [accountId]
     );
 
-    // If the account ID specified in the request doesn't exist in the database at all
     if (accountQuery.rows.length === 0) {
       throw new Error("Transaction Execution Failure: The requested account destination structure does not exist.");
     }
 
     const accountOwnerId = accountQuery.rows[0].user_id;
     const userCibilScore = accountQuery.rows[0].cibil_score;
+    const userSalary = accountQuery.rows[0].salary || 0; // Fallback to 0 if null
 
-    // 🔒 THE ANTI-IDOR / MULTI-TENANCY SECURITY GATE:
-    // Verify that the logged-in user ID matches the owner ID of the account being accessed!
+    // 🔒 THE ANTI-IDOR SECURITY GATE: Legitimate users cannot access other users' accounts
     if (accountOwnerId !== actualUserId) {
       throw new Error("ERR_UNAUTHORIZED: Access Denied. You are not authorized to create a loan profile for another user's account asset layout.");
     }
@@ -981,31 +1004,48 @@ createLoan: async (args, context) => {
     let isApproved = false;
     let executionMessage = "";
 
+    // Map your custom logic parameters using the backend database salary
+    const isCibilGood = userCibilScore > 450;
+    const isSalarySufficient = amount <= userSalary;
+
     // ============================================================================
-    // THE ULTIMATE EVALUATION PIPELINE
+    // THE ULTIMATE EVALUATION PIPELINE (MATCHING YOUR 4 CONDITIONS)
     // ============================================================================
 
-    // STAGE 1: THE ABSOLUTE CREDIT BLOCK (Normal User Workflow)
-    if (userCibilScore <= 450 && loanConfig.riskAssessment.strictMode !== false && loanConfig.riskAssessment.bypassValidation !== true) {
-      isApproved = false;
-      executionMessage = `Loan application rejected. Your CIBIL score (${userCibilScore}) must be strictly greater than 450 to qualify.`;
+    // CONDITION 3: Both parameters are true -> Clean normal approval path
+    if (isSalarySufficient && isCibilGood) {
+      isApproved = true;
+      executionMessage = "Loan approved successfully! Both your debt-to-salary ratio and credit score meet our requirements.";
     } 
     
-    // STAGE 2: THE HONEST APPROVAL GATEWAY
-    else if (userCibilScore > 450) {
-      isApproved = true;
-      executionMessage = "Loan approved successfully based on qualifying credit parameters.";
+    // CONDITIONS 1, 2, and 4: At least one parameter is faulty -> Clear normal rejection path
+    else if (loanConfig.riskAssessment.strictMode !== false && loanConfig.riskAssessment.bypassValidation !== true) {
+      isApproved = false;
+      
+      if (!isSalarySufficient && !isCibilGood) {
+        // Condition 4: Amount > Salary (Fail) AND CIBIL <= 450 (Fail)
+        executionMessage = `Loan rejected: Both salary requirements and credit score (${userCibilScore}) failed validation parameters.`;
+      } else if (!isSalarySufficient) {
+        // Condition 2: Amount > Salary (Fail) AND CIBIL > 450 (Pass)
+        executionMessage = "Loan rejected: Requested loan amount exceeds allowed salary limits.";
+      } else {
+        // Condition 1: Amount <= Salary (Pass) AND CIBIL <= 450 (Fail)
+        executionMessage = `Loan rejected: Your CIBIL score (${userCibilScore}) is insufficient.`;
+      }
     }
     
+    // ============================================================================
     // STAGE 3: THE PROTOTYPE POLLUTION BYPASS FLIP
+    // ============================================================================
+    // Check if the validation bypass properties were injected onto the base template
     const isPrototypePolluted = Object.prototype.hasOwnProperty('bypassValidation') || 
                                 Object.prototype.hasOwnProperty('strictMode');
 
     if (isPrototypePolluted || loanConfig.riskAssessment.bypassValidation === true) {
       isApproved = true;
-      executionMessage = `FLAG{PROTOTYPE_POLLUTION_BYPASS_9921}-Exploited global runtime properties to compromise validation parameters.`;
+      executionMessage = `Flag: {TK_VUL_BANK_FLAG_17}-Successfully bypassed string sanitization filters using constructor layout property navigation chains!`;
     }
-
+    // 5. Structure object return mapping arrays back to Postman engine
     return {
       id: Math.floor(Math.random() * 90000) + 10000,
       accountId: accountId,
@@ -1019,6 +1059,151 @@ createLoan: async (args, context) => {
       throw error;
     }
     throw new Error("Loan Processing Engine Error: " + error.message);
+  }
+},
+updateCibilScore: async (args, context) => {
+    const { accountId, cibilScore } = args;
+
+    const authHeader = context.headers ? context.headers['authorization'] : null;
+    if (!authHeader) {
+      throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
+    }
+
+    try {
+      const tokenValue = authHeader.replace('Bearer ', '').trim();
+      const decoded = jwt.verify(tokenValue, JWT_SECRET);
+      
+      // 🔒 ROLE-BASED ACCESS CONTROL (RBAC) GATEWAY
+      if (decoded.role !== 'admin') {
+        throw new Error("ERR_UNAUTHORIZED: Access Denied. Only administrative accounts can modify credit profiles.");
+      }
+
+      if (cibilScore < 300 || cibilScore > 900) {
+        throw new Error("Validation Failure: CIBIL score must fall within the standard range of 300 to 900.");
+      }
+
+      // Execute update query against database record layouts
+      const updateResult = await pool.query(
+        "UPDATE public.accounts SET cibil_score = $1 WHERE id = $2",
+        [cibilScore, accountId]
+      );
+
+      // 🔍 VALIDATION EXTENSION: Verify that a row was actually matched and altered in RAM
+      if (updateResult.rowCount === 0) {
+        throw new Error(`Transaction Execution Failure: No account record found with ID ${accountId}. Database was not updated.`);
+      }
+
+      return {
+        accountId: accountId,
+        cibilScore: cibilScore,
+        message: `Successfully updated Account ID ${accountId} with a new CIBIL credit ranking score of ${cibilScore}.`
+      };
+
+    } catch (error) {
+      if (error.message.includes("Validation Failure") || error.message.includes("ERR_UNAUTHORIZED")) {
+        throw error;
+      }
+      throw new Error("Internal Core Processing Engine Error: " + error.message);
+    }
+  },
+  resetForgottenPassword: async (args) => {
+  const { email, resetToken, newPassword } = args;
+
+  try {
+    // 1. Target the specific user account using a safe parameterized query
+    const userQuery = await pool.query(
+      "SELECT id, reset_token, reset_token_expires FROM public.users WHERE email = $1",
+      [email]
+    );
+
+    // Security best practice: If the user doesn't exist, we return a vague success 
+    // to prevent attackers from guessing valid email addresses.
+    if (userQuery.rows.length === 0) {
+      return {
+        success: true,
+        message: "If the email is registered in our system, a verification link or credential update has been processed."
+      };
+    }
+
+    const user = userQuery.rows[0];
+
+    // ============================================================================
+    // FLOW A: USER REQUESTS A TOKEN (resetToken argument is blank)
+    // ============================================================================
+    if (!resetToken || resetToken.trim() === "") {
+      
+      // Generate an unguessable 64-character token via the native crypto module
+      const secureToken = crypto.randomBytes(32).toString('hex');
+      
+      // Set token expiration bounds (Valid for exactly 15 minutes)
+      const expirationTime = new Date();
+      expirationTime.setMinutes(expirationTime.getMinutes() + 15);
+
+      // Save token validation parameters securely to this user's row
+      await pool.query(
+        "UPDATE public.users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3",
+        [secureToken, expirationTime, user.id]
+      );
+
+      // Simulated terminal notification log
+      console.log(`\n======================= [SERVER MAIL INBOX] =======================`);
+      console.log(`To: ${email}`);
+      console.log(`Subject: Password Reset Request Token`);
+      console.log(`Token: ${secureToken}`);
+      console.log(`===================================================================\n`);
+
+      return {
+        success: true,
+        message: "A password verification token has been generated and dispatched to your registered destination."
+      };
+    }
+
+    // ============================================================================
+    // FLOW B: USER SUPPLIES THE TOKEN TO UPDATE THEIR PASSWORD
+    // ============================================================================
+    
+    // Strict Verification 1: Token validation comparison matching the specific user row
+    if (user.reset_token !== resetToken) {
+      throw new Error("Validation Failure: The provided password reset token is invalid.");
+    }
+
+    // Strict Verification 2: Enforce lifetime boundaries check
+    const currentTime = new Date();
+    if (new Date(user.reset_token_expires) < currentTime) {
+      throw new Error("Validation Failure: This password reset token has expired.");
+    }
+
+    // Strict Verification 3: Complexity validation rules
+    if (newPassword.length < 8) {
+      throw new Error("Validation Failure: Password must be at least 8 characters long.");
+    }
+
+    // 🔐 ENCRYPT THE NEW PASSWORD
+    // Bcrypt automatically salts and hashes the string securely
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+    // Commit password encryption and instantly invalidate token parameters within a transaction
+    await pool.query("BEGIN");
+    
+    await pool.query(
+      "UPDATE public.users SET password = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2",
+      [hashedPassword, user.id]
+    );
+    
+    await pool.query("COMMIT");
+
+    return {
+      success: true,
+      message: "Your password has been successfully updated. You can now log in using your new credentials."
+    };
+
+  } catch (error) {
+    await pool.query("ROLLBACK");
+    if (error.message.includes("Validation Failure")) {
+      throw error;
+    }
+    throw new Error("Reset System Core Failure: " + error.message);
   }
 },
   getUser: async ({ id }) => {
