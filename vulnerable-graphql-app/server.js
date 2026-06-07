@@ -104,7 +104,11 @@ const schemaV3 = buildSchema(`
     cibilScore: Int!
     message: String!
   }
-  type ResetResult {
+  type ForgotPasswordResult {
+    success: Boolean!
+    message: String!
+  }
+  type ResetPasswordResult {
     success: Boolean!
     message: String!
   }
@@ -133,7 +137,8 @@ const schemaV3 = buildSchema(`
     createSip(sipName: String!, amount: Int!, tenure: Int!, sipType: String!): SipPlan
     createLoan(accountId: Int!, amount: Int!, options: String): LoanResult
     updateCibilScore(accountId: Int!, cibilScore: Int!): UpdateCibilResult
-    resetForgottenPassword(email: String!, resetToken: String!, newPassword: String!): ResetResult
+    forgotPasswordRequest(email: String!): ForgotPasswordResult
+    executePasswordReset(token: String!, newPassword: String!): ResetPasswordResult
   
   }
 
@@ -1106,84 +1111,90 @@ updateCibilScore: async (args, context) => {
       throw new Error("Internal Core Processing Engine Error: " + error.message);
     }
   },
-  resetForgottenPassword: async (args) => {
-  const { email, resetToken, newPassword } = args;
+  forgotPasswordRequest: async (args) => {
+  const { email } = args;
 
   try {
-    // 1. Target the specific user account using a safe parameterized query
+    // 1. Locate the user profile row by email
     const userQuery = await pool.query(
-      "SELECT id, reset_token, reset_token_expires FROM public.users WHERE email = $1",
+      "SELECT id FROM public.users WHERE email = $1",
       [email]
     );
 
-    // Security best practice: If the user doesn't exist, we return a vague success 
-    // to prevent attackers from guessing valid email addresses.
+    // Vague success response to defend against account enumeration
     if (userQuery.rows.length === 0) {
       return {
         success: true,
-        message: "If the email is registered in our system, a verification link or credential update has been processed."
+        message: "If the account exists, a secure verification token has been generated."
       };
     }
 
-    const user = userQuery.rows[0];
+    const userId = userQuery.rows[0].id;
 
-    // ============================================================================
-    // FLOW A: USER REQUESTS A TOKEN (resetToken argument is blank)
-    // ============================================================================
-    if (!resetToken || resetToken.trim() === "") {
-      
-      // Generate an unguessable 64-character token via the native crypto module
-      const secureToken = crypto.randomBytes(32).toString('hex');
-      
-      // Set token expiration bounds (Valid for exactly 15 minutes)
-      const expirationTime = new Date();
-      expirationTime.setMinutes(expirationTime.getMinutes() + 15);
-
-      // Save token validation parameters securely to this user's row
-      await pool.query(
-        "UPDATE public.users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3",
-        [secureToken, expirationTime, user.id]
-      );
-
-      // Simulated terminal notification log
-      console.log(`\n======================= [SERVER MAIL INBOX] =======================`);
-      console.log(`To: ${email}`);
-      console.log(`Subject: Password Reset Request Token`);
-      console.log(`Token: ${secureToken}`);
-      console.log(`===================================================================\n`);
-
-      return {
-        success: true,
-        message: "A password verification token has been generated and dispatched to your registered destination."
-      };
-    }
-
-    // ============================================================================
-    // FLOW B: USER SUPPLIES THE TOKEN TO UPDATE THEIR PASSWORD
-    // ============================================================================
+    // 2. Generate an unguessable 64-character token via the crypto module
+    const secureToken = crypto.randomBytes(32).toString('hex');
     
-    // Strict Verification 1: Token validation comparison matching the specific user row
-    if (user.reset_token !== resetToken) {
-      throw new Error("Validation Failure: The provided password reset token is invalid.");
+    // 3. Set lifetime window boundaries (Valid for 15 minutes)
+    const expirationTime = new Date();
+    expirationTime.setMinutes(expirationTime.getMinutes() + 15);
+
+    // 4. Save validation parameters securely to this user's database entry
+    await pool.query(
+      "UPDATE public.users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3",
+      [secureToken, expirationTime, userId]
+    );
+
+    // Print to server console for local lab testing extraction
+    console.log(`\n======================= [SERVER MAIL INBOX] =======================`);
+    console.log(`To: ${email}`);
+    console.log(`Token: ${secureToken}`);
+    console.log(`===================================================================\n`);
+
+    return {
+      success: true,
+      message: "If the account exists, a secure verification token has been generated."
+    };
+
+  } catch (error) {
+    throw new Error("Core System Request Failure: " + error.message);
+  }
+},
+executePasswordReset: async (args) => {
+  const { token, newPassword } = args;
+
+  try {
+    if (!token || token.trim() === "") {
+      throw new Error("Validation Failure: Reset token identifier parameter is missing.");
     }
 
-    // Strict Verification 2: Enforce lifetime boundaries check
+    if (newPassword.length < 8) {
+      throw new Error("Validation Failure: New credentials must be at least 8 characters long.");
+    }
+
+    // 1. Identify the user account strictly by looking up who owns the token
+    // The client CANNOT supply a custom user ID or email here, making IDOR impossible.
+    const tokenQuery = await pool.query(
+      "SELECT id, reset_token_expires FROM public.users WHERE reset_token = $1",
+      [token]
+    );
+
+    if (tokenQuery.rows.length === 0) {
+      throw new Error("Validation Failure: Invalid or unrecognized verification token.");
+    }
+
+    const user = tokenQuery.rows[0];
+
+    // 2. Enforce token expiration boundaries
     const currentTime = new Date();
     if (new Date(user.reset_token_expires) < currentTime) {
-      throw new Error("Validation Failure: This password reset token has expired.");
+      throw new Error("Validation Failure: This verification token has expired.");
     }
 
-    // Strict Verification 3: Complexity validation rules
-    if (newPassword.length < 8) {
-      throw new Error("Validation Failure: Password must be at least 8 characters long.");
-    }
-
-    // 🔐 ENCRYPT THE NEW PASSWORD
-    // Bcrypt automatically salts and hashes the string securely
+    // 3. 🔐 Encrypt the incoming text string using bcryptjs
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
 
-    // Commit password encryption and instantly invalidate token parameters within a transaction
+    // 4. Execute password swap and wipe token values inside an atomic block transaction
     await pool.query("BEGIN");
     
     await pool.query(
@@ -1195,7 +1206,7 @@ updateCibilScore: async (args, context) => {
 
     return {
       success: true,
-      message: "Your password has been successfully updated. You can now log in using your new credentials."
+      message: "Your account password have been successfully updated. You can now log in."
     };
 
   } catch (error) {
@@ -1203,7 +1214,7 @@ updateCibilScore: async (args, context) => {
     if (error.message.includes("Validation Failure")) {
       throw error;
     }
-    throw new Error("Reset System Core Failure: " + error.message);
+    throw new Error("Core System Reset Failure: " + error.message);
   }
 },
   getUser: async ({ id }) => {
