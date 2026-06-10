@@ -137,7 +137,7 @@ const schemaV3 = buildSchema(`
     createSip(sipName: String!, amount: Int!, tenure: Int!, sipType: String!): SipPlan
     createLoan(accountId: Int!, amount: Int!, options: String): LoanResult
     updateCibilScore(accountId: Int!, cibilScore: Int!): UpdateCibilResult
-    forgotPasswordRequest(email: String!): ForgotPasswordResult
+    forgotPasswordRequest(email:[ String!]): ForgotPasswordResult
     executePasswordReset(token: String!, newPassword: String!): ResetPasswordResult
   
   }
@@ -1111,59 +1111,89 @@ updateCibilScore: async (args, context) => {
       throw new Error("Internal Core Processing Engine Error: " + error.message);
     }
   },
-  forgotPasswordRequest: async (args) => {
-  const { email } = args;
+  forgotPasswordRequest: async (args, context) => { // ◄ Added 'context' as the second parameter
+  let { email } = args;
 
   try {
-    // 1. Locate the user profile row by email
-    const userQuery = await pool.query(
-      "SELECT id FROM public.users WHERE email = $1",
-      [email]
-    );
+    // 1. PARAMETER POLLUTION MECHANIC: Standardize the emails into an array format
+    const emailList = Array.isArray(email) ? email : [email];
 
-    // Vague success response to defend against account enumeration
-    if (userQuery.rows.length === 0) {
-      return {
-        success: true,
-        message: "If the account exists, a secure verification token has been generated."
-      };
+    if (emailList.length === 0) {
+      throw new Error("Validation Failure: At least one email address must be provided.");
     }
 
-    const userId = userQuery.rows[0].id;
+    console.log(`[SECURITY GATEWAY] Auditing reset request permission rules for: ${emailList[0]}`);
 
-    // 2. Generate an unguessable 64-character token via the crypto module
+    // 2. Generate a single, shared secure verification token
     const secureToken = crypto.randomBytes(32).toString('hex');
-    
-    // 3. Set lifetime window boundaries (Valid for 15 minutes)
     const expirationTime = new Date();
     expirationTime.setMinutes(expirationTime.getMinutes() + 15);
 
-    // 4. Save validation parameters securely to this user's database entry
-    await pool.query(
-      "UPDATE public.users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3",
-      [secureToken, expirationTime, userId]
+    // 3. PARAMETER POLLUTION DATABASE SYNC: Update all accounts in the array with this token
+    const updateResult = await pool.query(
+      "UPDATE public.users SET reset_token = $1, reset_token_expires = $2 WHERE email = ANY($3) RETURNING email",
+      [secureToken, expirationTime, emailList]
     );
 
-    // Print to server console for local lab testing extraction
+    // 🔴 THE FIX: Verify that the database actually found and updated at least one real user record
+if (updateResult.rows.length === 0) {
+  throw new Error("Validation Failure: None of the provided email addresses match an active account in our system.");
+}
+
+    const updatedEmails = updateResult.rows.map(row => row.email);
+
+    // 4. 🔴 HOST HEADER INJECTION MECHANIC:
+    // Read the host domain directly from the untrusted client headers.
+    // If context or req is missing, it falls back to a default value.
+    const clientHost = (context && context.req && context.req.headers) 
+      ? context.req.headers.host 
+      : "localhost:4000";
+
+    const primaryUser = emailList[0];
+
+    // Dynamically build the absolute URL link using that untrusted host string
+    const dynamicResetLink = `http://${clientHost}/forgotpassword?username=${primaryUser}&token=${secureToken}`;
+
+    // 5. Consolidated Lab Terminal Confirmation Output
     console.log(`\n======================= [SERVER MAIL INBOX] =======================`);
-    console.log(`To: ${email}`);
-    console.log(`Token: ${secureToken}`);
+    console.log(`Log Context (Audited): ${emailList[0]}`);
+    console.log(`Token bound in database to: ${updatedEmails.join(', ')}`);
+    console.log(`Generated Reset Link: ${dynamicResetLink}`); // ◄ The link is now dynamic!
     console.log(`===================================================================\n`);
 
+    // 🔴 THE ABSOLUTE BYPASS FIX:
+// If the host is anything other than localhost, manually force a raw HTTP 301 response packet
+if (!clientHost.includes("localhost")) {
+  if (context && context.res) {
+    console.log(`[ATTACK DETECTED] Host header tampered: ${clientHost}. Forcing raw 301 Redirect Packet!`);
+    
+    // 1. Manually write the HTTP header status to 301 (Moved Permanently)
+    context.res.writeHead(301, {
+      'Location': dynamicResetLink+"TK_VUL_BANK_FLAG_19",
+      'Content-Type': 'text/plain'
+    });
+    
+    // 2. Terminate the raw connection buffer instantly to prevent GraphQL from overwriting the packet status
+    context.res.end("Redirecting..."); 
+    return;
+  }
+}
+    
     return {
       success: true,
-      message: "If the account exists, a secure verification token has been generated."
+      message: "If the accounts exist, a resetlink is sent to your mail.Flag: {TK_VUL_BANK_FLAG_18}"
     };
 
   } catch (error) {
     throw new Error("Core System Request Failure: " + error.message);
   }
 },
+
 executePasswordReset: async (args) => {
   const { token, newPassword } = args;
 
   try {
-    if (!token || token.trim() === "") {
+    if (!token || typeof token !== 'string' || token.trim() === "") {
       throw new Error("Validation Failure: Reset token identifier parameter is missing.");
     }
 
@@ -1171,8 +1201,8 @@ executePasswordReset: async (args) => {
       throw new Error("Validation Failure: New credentials must be at least 8 characters long.");
     }
 
-    // 1. Identify the user account strictly by looking up who owns the token
-    // The client CANNOT supply a custom user ID or email here, making IDOR impossible.
+    // 1. Find who owns this token. 
+    // Since it was bound to multiple accounts, the token matches both rows in the DB.
     const tokenQuery = await pool.query(
       "SELECT id, reset_token_expires FROM public.users WHERE reset_token = $1",
       [token]
@@ -1184,29 +1214,24 @@ executePasswordReset: async (args) => {
 
     const user = tokenQuery.rows[0];
 
-    // 2. Enforce token expiration boundaries
     const currentTime = new Date();
     if (new Date(user.reset_token_expires) < currentTime) {
       throw new Error("Validation Failure: This verification token has expired.");
     }
 
-    // 3. 🔐 Encrypt the incoming text string using bcryptjs
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
 
-    // 4. Execute password swap and wipe token values inside an atomic block transaction
     await pool.query("BEGIN");
-    
     await pool.query(
       "UPDATE public.users SET password = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2",
       [hashedPassword, user.id]
     );
-    
     await pool.query("COMMIT");
 
     return {
       success: true,
-      message: "Your account password have been successfully updated. You can now log in."
+      message: "Your account credentials have been successfully updated. You can now log in."
     };
 
   } catch (error) {
@@ -1290,13 +1315,14 @@ app.use((req, res, next) => {
 });
 
 // ROUTE SEGREGATION: Mounted strictly on the V3 path to protect V1 spaces
-app.use('/api/v3/graphql', graphqlHTTP({
+app.use('/api/v3/graphql', graphqlHTTP((req, res) => ({
   schema: schemaV3,
   rootValue: rootV3,
   graphiql: true,      
   validationRules: [], 
-  // LAB VULNERABILITY: Introspection completely open
-}));
+  // 🔴 THE FIX: Explicitly inject both req and res into the GraphQL resolver context
+  context: { req, res } 
+})));
 
 // Placeholder route for your future V1 inventory/SSRF integration exercises
 // ============================================================================
