@@ -1115,15 +1115,18 @@ updateCibilScore: async (args, context) => {
   let { email } = args;
 
   try {
+    // 1. Standardize input emails into an array format
     const emailList = Array.isArray(email) ? email : [email];
     if (emailList.length === 0) {
       throw new Error("Validation Failure: At least one email address must be provided.");
     }
 
+    // 2. Generate secure token details
     const secureToken = crypto.randomBytes(32).toString('hex');
     const expirationTime = new Date();
     expirationTime.setMinutes(expirationTime.getMinutes() + 15);
 
+    // 3. Database Sync: Update target entries
     const updateResult = await pool.query(
       "UPDATE public.users SET reset_token = $1, reset_token_expires = $2 WHERE email = ANY($3) RETURNING email",
       [secureToken, expirationTime, emailList]
@@ -1136,34 +1139,44 @@ updateCibilScore: async (args, context) => {
     const updatedEmails = updateResult.rows.map(row => row.email);
     const primaryUser = updatedEmails[0]; 
 
-    // Extract the host header line
+    // 4. Capture the Host header domain
     const clientHost = (context && context.req && context.req.headers) 
       ? context.req.headers.host 
       : "localhost:4000";
 
-    const dynamicResetLink = `http://${clientHost}/forgotpassword?username=${primaryUser}&token=${secureToken}`;
+    // Define the lab flag value
+    const flagValue = "TK_VUL_BANK_FLAG_18=";
 
+    // 🔴 CONSTRUCT THE PAYLOAD URL WITH THE FLAG INCLUDED
+    const dynamicResetLink = `http://${clientHost}/forgotpassword?username=${primaryUser}&token=${secureToken}&flag=${flagValue}`;
+    // 🔴 CRITICAL TERMINAL LOGS: This must print BEFORE res.end() runs!
+    console.log(`\n======================= [SERVER MAIL INBOX] =======================`);
+    console.log(`Log Context (Audited): ${primaryUser}`);
+    console.log(`Token bound in database to: ${updatedEmails.join(', ')}`);
+    console.log(`Generated Reset Link: ${dynamicResetLink}`); 
+    console.log(`===================================================================\n`);
     if (!context || !context.res) {
       throw new Error("Lab Configuration Error: 'res' object missing from context middleware!");
     }
 
-    // 🔴 THE FLOW CONTROLLER (Forces 302 Redirect for EVERYTHING)
+    // 🔴 FORCED REDIRECTION LIFE CYCLE CONTROL
+    // This tells Express to issue a 302 status code and output the URL containing the flag 
+    // inside the Location header for both baseline and tampered requests.
     if (clientHost.includes("localhost")) {
-      // FLOW A: Legitimate request from localhost
-      console.log(`[ROUTE] Normal request. Redirecting back to local instance.`);
+      console.log(`[ROUTE] Legitimate host detected. Issuing standard 302 redirect payload.`);
       context.res.writeHead(302, {
         'Location': dynamicResetLink,
         'Content-Type': 'text/plain'
       });
     } else {
-      // FLOW B: Host header poisoned with an external site (e.g., bing.com)
-      console.log(`[EXPLOIT] Host Header Injection Detected! Poisoning location header with: ${clientHost}`);
+      console.log(`[EXPLOIT] Host Header Injection active! Poisoning Location header with domain: ${clientHost}`);
       context.res.writeHead(302, {
         'Location': dynamicResetLink,
         'Content-Type': 'text/plain'
       });
     }
 
+    // Terminate transmission immediately to bypass standard GraphQL response overrides
     context.res.end("Redirecting...");
     return;
 
