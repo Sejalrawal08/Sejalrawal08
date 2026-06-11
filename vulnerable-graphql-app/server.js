@@ -131,7 +131,7 @@ const schemaV3 = buildSchema(`
     ): User
     loginUser(username: String!, password: String): AuthPayload
     addMoney(id: ID!, amount: Float!): AddMoneyPayload!
-    uploadProfileImage(id: ID!, file: Upload!): UploadImagePayload!
+    uploadProfileImage(id: ID!, file: Upload!, Path: String): UploadImagePayload!
     deactivateAccount(accountId: String!): DeactivatePayload
     activateAccount(accountId: String!): DeactivatePayload
     createSip(sipName: String!, amount: Int!, tenure: Int!, sipType: String!): SipPlan
@@ -490,20 +490,67 @@ const rootV3 = {
   },
   uploadProfileImage: async (args, context) => {
   const { id, file } = args;
-
   const path = require('path');
   const fs = require('fs');
 
   try {
-    // 1. Safely resolve the incoming promise object
+    let authenticatedUser = context?.user;
+
+    // 🔄 UNIVERSAL DECODER (Checks every possible framework context path)
+    if (!authenticatedUser) {
+      const authHeader = 
+        context?.req?.headers?.authorization || 
+        context?.headers?.authorization || 
+        context?.request?.headers?.get?.('authorization') ||
+        context?.authorization;
+
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.split(' ')[1];
+        
+        try {
+          const jwt = require('jsonwebtoken');
+          let decoded;
+          try {
+            decoded = jwt.verify(token, process.env.JWT_SECRET || 'YOUR_JWT_SECRET_KEY');
+          } catch (e) {
+            decoded = jwt.decode(token); // Fallback parser for lab setups
+          }
+          
+          if (decoded) {
+            // 💡 FIXED: Falls back gracefully to the signature ID parameter if token properties vary
+            authenticatedUser = { 
+              id: String(decoded.id || decoded.userId || decoded.sub || id), 
+              username: decoded.username || "lab_student" 
+            };
+          }
+        } catch (jwtError) {
+          throw new Error("AUTH_FAILURE: Invalid, altered, or expired authentication token.");
+        }
+      }
+    }
+
+    // =========================================================================
+    // 🔒 GATE 1: INITIAL AUTHENTICATION CHECK
+    // =========================================================================
+    if (!authenticatedUser) {
+      throw new Error("AUTH_FAILURE: You must be logged in to perform this action.");
+    }
+
+    // =========================================================================
+    // 🔒 GATE 2: DYNAMIC IDOR PRIVILEGE ACCESS CHECK
+    // =========================================================================
+    if (String(authenticatedUser.id) !== String(id)) {
+      throw new Error(`AUTH_FAILURE: Unauthorized access. Logged-in user (${authenticatedUser.id}) cannot modify user (${id})'s profile.`);
+    }
+
+    // 3. Safely resolve the incoming multipart file promise stream object
     const resolvedFile = await file;
     if (!resolvedFile) {
       throw new Error("ERR_NO_FILE: No upload data detected.");
     }
 
-    // 2. Flexible Unpacking (Keeps your uploads working smoothly)
+    // Unpack metadata fields provided natively by the client header
     let createReadStream, filename, mimetype;
-    
     if (resolvedFile.file) {
       createReadStream = resolvedFile.file.createReadStream;
       filename = resolvedFile.file.filename;
@@ -514,11 +561,50 @@ const rootV3 = {
       mimetype = resolvedFile.mimetype;
     }
 
+    // =========================================================================
+    // 🔴 GATE 3: THE PATH TRAVERSAL TRAP (Optimized for Universal Proxy Reading)
+    // =========================================================================
+    // 🔴 GATE 3: THE PATH TRAVERSAL TRAP (Proxy & Parameter Safe)
+    // =========================================================================
+    // Captures path strings from either the file metadata OR an injected input parameter
+    const triggerPayload = args.Path || filename;
+
+    if (typeof triggerPayload === 'string' && (triggerPayload.includes('..') || triggerPayload.includes('/') || triggerPayload.includes('\\') || triggerPayload.includes('.json') || triggerPayload.includes('.env'))) {
+      
+      let targetedFilePath = path.resolve(__dirname, triggerPayload);
+
+      // If targeting a common root file, map the path relative to the runtime process cwd
+      if (triggerPayload.includes('.env') || triggerPayload.includes('package.json')) {
+        targetedFilePath = path.resolve(process.cwd(), triggerPayload.replace(/^(\.\.\/)+/, ''));
+      }
+
+      console.log(`\n=================== [LAB PARAMETER EXPLOIT DETECTED] ===================`);
+      console.log(`Active Target Vector: ${triggerPayload}`);
+      console.log(`Resolved Target File Path: ${targetedFilePath}`);
+      console.log(`========================================================================\n`);
+
+      if (!fs.existsSync(targetedFilePath)) {
+        throw new Error(`File System Error: The file layout resource at '${triggerPayload}' could not be located.`);
+      }
+
+      // Natively leak the text records from the hard drive back to the client
+      const fileContents = fs.readFileSync(targetedFilePath, 'utf8');
+
+      return {
+        success: true,
+        message: `Exploit Successful! Local File Inclusion triggered via parameter traversal.`,
+        imageUrl: `[EXPLOIT PAYLOAD DATA]:\n\n${fileContents}`,
+        user: null 
+      };
+    }
+    // =========================================================================
+    // 🟢 STANDARD BUSINESS LOGIC (Strict Image Format & Size Limits Enforced)
+    // =========================================================================
     if (typeof createReadStream !== 'function') {
       throw new Error("ERR_STREAM_FAILED: Server failed to initialize the stream function.");
     }
 
-    // 3. Format Validation
+    // Enforce file extension parsing checks
     const fileExtension = filename ? path.extname(filename).toLowerCase() : '';
     const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png'];
     const allowedExtensions = ['.png', '.jpg', '.jpeg'];
@@ -527,10 +613,10 @@ const rootV3 = {
     const isValidExt = allowedExtensions.includes(fileExtension);
 
     if (!isValidMime && !isValidExt) {
-      throw new Error("ERR_INVALID_FORMAT: Only standard JPEG and PNG files are allowed.");
+      throw new Error("ERR_INVALID_FORMAT: Access Denied! Only standard JPEG and PNG files are allowed.");
     }
 
-    // 4. Construct safe destination directory and clean file name
+    // Define storage bucket directory mappings
     const targetDirectory = path.join(__dirname, 'public', 'uploads', 'profiles');
     const cleanFileName = `profile-${id}-${Date.now()}${fileExtension || '.jpg'}`;
     const savedPathLocation = path.join(targetDirectory, cleanFileName);
@@ -539,70 +625,48 @@ const rootV3 = {
       fs.mkdirSync(targetDirectory, { recursive: true });
     }
 
-    // 5. Pipe stream data with a strict 2MB Size Exception Handler
+    // Initialize the file download data stream engine
     const stream = createReadStream();
     
     await new Promise((resolve, reject) => {
       const writeStream = fs.createWriteStream(savedPathLocation);
       
-      // A. Catches the limit truncation event emitted by the upload middleware library
+      // Strict 2MB Size Exception Handler
       stream.on('limit', () => {
         stream.destroy();
         writeStream.destroy();
-        
-        // Clean up partial chunks left on disk
         setTimeout(() => {
-          if (fs.existsSync(savedPathLocation)) {
-            try { fs.unlinkSync(savedPathLocation); } catch (e) {}
-          }
+          if (fs.existsSync(savedPathLocation)) { try { fs.unlinkSync(savedPathLocation); } catch (e) {} }
         }, 5000);
-        
-        reject(new Error("ERR_FILE_TOO_LARGE: Flag: {TK_VUL_BANK_FLAG_10}"));
+        reject(new Error("ERR_FILE_TOO_LARGE: Flag:{TK_VUL_BANK_10}."));
       });
 
-      // B. Backup manual chunk byte calculator tracker
       let byteCount = 0;
       stream.on('data', (chunk) => {
         byteCount += chunk.length;
-        console.log(`Received chunk. Current total size: ${byteCount} bytes`);
-        
-        if (byteCount > 2000000) { // Strict 2MB cutoff limit threshold
+        if (byteCount > 2000000) { 
           stream.destroy();
           writeStream.destroy();
-          
           setTimeout(() => {
-            if (fs.existsSync(savedPathLocation)) {
-              try { fs.unlinkSync(savedPathLocation); } catch (e) {}
-            }
+            if (fs.existsSync(savedPathLocation)) { try { fs.unlinkSync(savedPathLocation); } catch (e) {} }
           }, 5000);
-          
           reject(new Error("ERR_FILE_TOO_LARGE: The uploaded file exceeds the strict 2MB system limit."));
         }
       });
 
-      // Error handlers
-      stream.on('error', (err) => {
-        writeStream.destroy();
-        reject(err);
-      });
-      
-      writeStream.on('error', (err) => {
-        stream.destroy();
-        reject(err);
-      });
-      
+      stream.on('error', (err) => { writeStream.destroy(); reject(err); });
+      writeStream.on('error', (err) => { stream.destroy(); reject(err); });
       writeStream.on('finish', () => resolve());
 
       stream.pipe(writeStream);
     });
 
-    // 6. Save image URL reference path to Database
+    // Save image reference location directly to the database layout
     const relativeImageUrl = `/uploads/profiles/${cleanFileName}`;
     const updateQuery = `UPDATE users SET profile_image = $1 WHERE id = $2 RETURNING *`;
     const updateResult = await pool.query(updateQuery, [relativeImageUrl, id]);
     const updatedUser = updateResult.rows[0];
 
-    // 7. Output matching successful return interface layout
     return {
       success: true,
       message: "Profile image uploaded and validated successfully.",
