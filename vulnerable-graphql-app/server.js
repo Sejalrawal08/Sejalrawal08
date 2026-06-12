@@ -1255,6 +1255,7 @@ updateCibilScore: async (args, context) => {
   },
   forgotPasswordRequest: async (args, context) => {
   let { email } = args;
+  const crypto = require('crypto'); // Ensure crypto is imported
 
   try {
     // 1. Standardize input emails into an array format
@@ -1286,40 +1287,63 @@ updateCibilScore: async (args, context) => {
       ? context.req.headers.host 
       : "localhost:4000";
 
-    // Define the lab flag value
-    const flagValue = "TK_VUL_BANK_FLAG_18=";
+    // Define the base lab flag value (Host Header Injection fallback)
+    let flagValue = "TK_VUL_BANK_FLAG_18=";
+    let locationHeaderMessage = "Redirecting...";
 
-    // 🔴 CONSTRUCT THE PAYLOAD URL WITH THE FLAG INCLUDED
-    const dynamicResetLink = `http://${clientHost}/forgotpassword?username=${primaryUser}&token=${secureToken}&flag=${flagValue}`;
-    // 🔴 CRITICAL TERMINAL LOGS: This must print BEFORE res.end() runs!
-    console.log(`\n======================= [SERVER MAIL INBOX] =======================`);
-    console.log(`Log Context (Audited): ${primaryUser}`);
-    console.log(`Token bound in database to: ${updatedEmails.join(', ')}`);
-    console.log(`Generated Reset Link: ${dynamicResetLink}`); 
-    console.log(`===================================================================\n`);
+    // =========================================================================
+    // 🔴 NEW EXPLOIT BOUNDARY: HTTP PARAMETER POLLUTION (HPP) INTEGRATION
+    // =========================================================================
+    const isParamPollution = Array.isArray(email) && email.length >= 2;
+
+    if (isParamPollution) {
+      // Elevate flag definition to HPP challenge type
+      flagValue = "TK_VUL_BANK_FLAG_19";
+      locationHeaderMessage = `HPP Flag: {${flagValue}} - The exact same reset token link has been simultaneously sent to both ${updatedEmails.join(' and ')}.`;
+      
+      console.log(`\n======================= [SERVER MAIL INBOX - HPP DETECTED] =======================`);
+      console.log(`Exploit Status: VULNERABLE TO PARAMETER POLLUTION`);
+      console.log(`Primary Account Target: ${primaryUser}`);
+      console.log(`Duplicated/Polluted Box:  ${updatedEmails.slice(1).join(', ')}`);
+      console.log(`Token bound in database to: ${updatedEmails.join(', ')}`);
+      console.log(`Generated Reset Link: http://${clientHost}/forgotpassword?username=${primaryUser}&token=${secureToken}`);
+      console.log(`🔥 PARAMETER POLLUTION FLAG ISSUED: {${flagValue}}`);
+      console.log(`==================================================================================\n`);
+    } else {
+      // 🟢 SAFE PATHWAY: PRESERVED ORIGINAL TERMINAL LOGGING LOGIC
+      const dynamicResetLink = `http://${clientHost}/forgotpassword?username=${primaryUser}&token=${secureToken}&flag=${flagValue}`;
+      console.log(`\n======================= [SERVER MAIL INBOX] =======================`);
+      console.log(`Log Context (Audited): ${primaryUser}`);
+      console.log(`Token bound in database to: ${updatedEmails.join(', ')}`);
+      console.log(`Generated Reset Link: ${dynamicResetLink}`); 
+      console.log(`===================================================================\n`);
+    }
+
     if (!context || !context.res) {
       throw new Error("Lab Configuration Error: 'res' object missing from context middleware!");
     }
 
-    // 🔴 FORCED REDIRECTION LIFE CYCLE CONTROL
-    // This tells Express to issue a 302 status code and output the URL containing the flag 
-    // inside the Location header for both baseline and tampered requests.
+    // 5. Construct the Final Redirect URI payload
+    const finalRedirectUrl = `http://${clientHost}/forgotpassword?username=${primaryUser}&token=${secureToken}&flag=${flagValue}`;
+
+    // 🔴 PRESERVED FORCED REDIRECTION LIFE CYCLE CONTROL
     if (clientHost.includes("localhost")) {
-      console.log(`[ROUTE] Legitimate host detected. Issuing standard 302 redirect payload.`);
+      if (!isParamPollution) console.log(`[ROUTE] Legitimate host detected. Issuing standard 302 redirect payload.`);
       context.res.writeHead(302, {
-        'Location': dynamicResetLink,
-        'Content-Type': 'text/plain'
+        'Location': finalRedirectUrl,
+        'Content-Type': 'text/plain',
+        'X-Lab-Message': locationHeaderMessage
       });
     } else {
       console.log(`[EXPLOIT] Host Header Injection active! Poisoning Location header with domain: ${clientHost}`);
       context.res.writeHead(302, {
-        'Location': dynamicResetLink,
+        'Location': finalRedirectUrl,
         'Content-Type': 'text/plain'
       });
     }
 
     // Terminate transmission immediately to bypass standard GraphQL response overrides
-    context.res.end("Redirecting...");
+    context.res.end(locationHeaderMessage);
     return;
 
   } catch (error) {
