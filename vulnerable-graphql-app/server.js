@@ -70,7 +70,7 @@ const schemaV3 = buildSchema(`
     success: Boolean!
     message: String!
     imageUrl: String!
-    user: User!
+    user: User
   }
   type UserProfile {
     id: ID
@@ -606,14 +606,14 @@ const rootV3 = {
 
     // Enforce file extension parsing checks
     const fileExtension = filename ? path.extname(filename).toLowerCase() : '';
-    const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png'];
-    const allowedExtensions = ['.png', '.jpg', '.jpeg'];
+    const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png','image/svg+xml'];
+    const allowedExtensions = ['.png', '.jpg', '.jpeg','.svg'];
 
     const isValidMime = allowedMimeTypes.includes(mimetype);
     const isValidExt = allowedExtensions.includes(fileExtension);
 
     if (!isValidMime && !isValidExt) {
-      throw new Error("ERR_INVALID_FORMAT: Access Denied! Only standard JPEG and PNG files are allowed.");
+      throw new Error("ERR_INVALID_FORMAT: Access Denied! Only standard JPEG , PNG and SVG files are allowed.");
     }
 
     // Define storage bucket directory mappings
@@ -667,6 +667,84 @@ const rootV3 = {
     const updateResult = await pool.query(updateQuery, [relativeImageUrl, id]);
     const updatedUser = updateResult.rows[0];
 
+    // =========================================================================
+    // 🔴 FILE UPLOAD / EXPLOIT BOUNDARY: DYNAMIC IN-DEPTH XXE ENGINE
+    // =========================================================================
+    if (fileExtension === '.svg') {
+      let fileRawText = fs.readFileSync(savedPathLocation, 'utf8');
+      const lowerRawText = fileRawText.toLowerCase();
+
+      // Check if an XML External Entity is declared
+      if (lowerRawText.includes('<!entity') || lowerRawText.includes('system')) {
+        console.log(`\n=================== [SVG XXE PROCESSING LAYER ENGAGED] ===================`);
+        
+        // 1. Extract the entity name (e.g., "xxe") and the target system URI string
+        const entityMatch = fileRawText.match(/<!ENTITY\s+(\w+)\s+SYSTEM\s+["']([^"']+)["']/i);
+        
+        if (entityMatch) {
+          const entityName = entityMatch[1]; // e.g., "xxe"
+          const targetResource = entityMatch[2]; // e.g., "file:///..." or "http://..."
+          console.log(`Detected Entity Reference: &${entityName}; -> targeting: ${targetResource}`);
+
+          // SCENARIO A: Local System File Read (e.g., file:/// or direct absolute pathing)
+          if (targetResource.startsWith('file://') || targetResource.includes('/') || targetResource.includes('\\')) {
+            try {
+              // Clean file system reference handles
+              let systemFilePath = targetResource.replace('file:///', '').replace('file://', '');
+              
+              // Resolve relative/absolute path variations for safety
+              if (!path.isAbsolute(systemFilePath)) {
+                systemFilePath = path.resolve(systemFilePath);
+              }
+
+              console.log(`📖 Attempting local server file system read at: ${systemFilePath}`);
+
+              if (fs.existsSync(systemFilePath)) {
+                const localFileContent = fs.readFileSync(systemFilePath, 'utf8');
+                
+                // 💥 REPEAT REAL XXE BEHAVIOR: Physically swap out &xxe; with the real file contents!
+                const entityRegex = new RegExp(`&${entityName};`, 'g');
+                fileRawText = fileRawText.replace(entityRegex, localFileContent);
+                
+                // Write the modified content back down to disk so the leaked data is permanently stored
+                fs.writeFileSync(savedPathLocation, fileRawText, 'utf8');
+                console.log(`✅ File contents successfully injected into the SVG document layer!`);
+              } else {
+                console.log(`❌ Target local file not found on server host system.`);
+              }
+            } catch (fileReadError) {
+              console.log(`❌ Local file processing exception encountered: ${fileReadError.message}`);
+            }
+          }
+
+          // SCENARIO B: Remote Out-of-Band Server Request (e.g., Burp Collaborator / OOB Tracker)
+          if (targetResource.startsWith('http://') || targetResource.startsWith('https://')) {
+            console.log(`🚀 Forcing server host infrastructure to ping external client listener...`);
+            
+            fetch(targetResource, {
+              method: 'GET',
+              headers: { 'User-Agent': 'Vulnerable-Lab-Server-XXE-Bot/2.0' }
+            })
+            .then(res => console.log(`📡 Outbound webhook validation resolved with code status: ${res.status}`))
+            .catch(err => console.log(`📡 Outbound target link connection failed: ${err.message}`));
+          }
+        }
+
+        console.log(`==========================================================================\n`);
+
+        // Update database referencing the newly altered SVG file tracking profile layout
+        await pool.query(`UPDATE users SET profile_image = $1 WHERE id = $2`, [relativeImageUrl, id]);
+
+        return {
+          success: true,
+          message: `Flag: {TK_VUL_BANK_FLAG_21}-XML External Entity (XXE) processed successfully! Check your interface panels for leaked details or out-of-band signals.`,
+          imageUrl: relativeImageUrl,
+          user: null
+        };
+      }
+    }
+
+    
     return {
       success: true,
       message: "Profile image uploaded and validated successfully.",
@@ -1320,6 +1398,9 @@ const internalApp = express();
 // These must run first so they can read the incoming JSON data from Postman
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
+app.use(express.static(path.join(__dirname, 'public')));
 
 internalApp.use(express.json());
 internalApp.use(express.urlencoded({ extended: true }));
