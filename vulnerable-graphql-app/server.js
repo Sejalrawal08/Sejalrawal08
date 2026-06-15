@@ -10,6 +10,8 @@ const pool = require('./db');
 const fs = require('fs');
 const { graphqlUploadExpress } = require('graphql-upload-minimal');
 const crypto = require('crypto');
+// Global memory cache to track timestamps of password reset requests per IP
+const rateLimitTracker = {};
 
 // ==========================================
 // V3 SCHEMA & RESOLVER CONFIGURATION
@@ -1290,7 +1292,53 @@ updateCibilScore: async (args, context) => {
   let { email } = args;
   const crypto = require('crypto'); // Ensure crypto is imported
 
+  // Identify the incoming client IP address safely for tracking thresholds
+  const clientIp = (context && context.req && context.req.ip) ? context.req.ip : "anonymous_attacker";
+
   try {
+    // =========================================================================
+    // 🔴 NEW EXPLOIT BOUNDARY: RATE LIMITING BYPASS CHALLENGE
+    // =========================================================================
+    const now = Date.now();
+    const oneMinuteWindow = 60 * 1000;
+
+    // Initialize track records for the client IP if empty
+    if (!rateLimitTracker[clientIp]) {
+      rateLimitTracker[clientIp] = [];
+    }
+
+    // Scrub tracking data older than 1 minute to keep sliding window clean
+    rateLimitTracker[clientIp] = rateLimitTracker[clientIp].filter(
+      timestamp => (now - timestamp) < oneMinuteWindow
+    );
+
+    // Record the timestamp of this incoming request
+    rateLimitTracker[clientIp].push(now);
+
+    // Trigger flag when the user floods the system (More than 5 requests in 60 seconds)
+    if (rateLimitTracker[clientIp].length > 5) {
+      const rateLimitFlag = "TK_VUL_BANK_FLAG_55_NO_RATE_LIMIT";
+      const rateLimitMessage = `Flag: {${rateLimitFlag}} - Missing Rate Limiting! Rapid request flooding successful against password reset endpoint. Total attempts: ${rateLimitTracker[clientIp].length}`;
+
+      console.log(`\n======================= [RATE LIMIT EXPLOIT DETECTED] =======================`);
+      console.log(`Exploit Target IP: ${clientIp}`);
+      console.log(`Burst Request Count: ${rateLimitTracker[clientIp].length} attempts in 1 min window`);
+      console.log(`🔥 BRUTE FORCE / FLOODING FLAG ISSUED: {${rateLimitFlag}}`);
+      console.log(`=============================================================================\n`);
+
+      if (!context || !context.res) {
+        throw new Error("Lab Configuration Error: 'res' object missing from context middleware!");
+      }
+
+      // Return a 429 Too Many Requests response with the rate limit flag
+      context.res.writeHead(429, { 'Content-Type': 'text/plain' });
+      context.res.end(rateLimitMessage);
+      return;
+    }
+
+    // =========================================================================
+    // 🟢 PRESERVED CORE LOGIC (Undisturbed Parameter Pollution & Original Flow)
+    // =========================================================================
     // 1. Standardize input emails into an array format
     const emailList = Array.isArray(email) ? email : [email];
     if (emailList.length === 0) {
@@ -1325,7 +1373,7 @@ updateCibilScore: async (args, context) => {
     let locationHeaderMessage = "Redirecting...";
 
     // =========================================================================
-    // 🔴 NEW EXPLOIT BOUNDARY: HTTP PARAMETER POLLUTION (HPP) INTEGRATION
+    // 🔴 PRESERVED EXPLOIT BOUNDARY: HTTP PARAMETER POLLUTION (HPP) INTEGRATION
     // =========================================================================
     const isParamPollution = Array.isArray(email) && email.length >= 2;
 
@@ -1343,7 +1391,7 @@ updateCibilScore: async (args, context) => {
       console.log(`🔥 PARAMETER POLLUTION FLAG ISSUED: {${flagValue}}`);
       console.log(`==================================================================================\n`);
     } else {
-      // 🟢 SAFE PATHWAY: PRESERVED ORIGINAL TERMINAL LOGGING LOGIC
+      // 🟢 PRESERVED ORIGINAL SAFE PATHWAY TERMINAL LOGGING LOGIC
       const dynamicResetLink = `http://${clientHost}/forgotpassword?username=${primaryUser}&token=${secureToken}&flag=${flagValue}`;
       console.log(`\n======================= [SERVER MAIL INBOX] =======================`);
       console.log(`Log Context (Audited): ${primaryUser}`);
