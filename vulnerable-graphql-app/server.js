@@ -373,63 +373,96 @@ const rootV3 = {
   // CTF PROFILE ENDPOINT: VULNERABLE TO IDOR & SQL INJECTION
   // =================================================================
   viewProfile: async (args, context) => {
-    const { id } = args; // The target ID passed inside the Postman GraphQL query panel
+  const { id } = args; 
 
-    // 1. Check for the incoming Authorization header from the Postman request
-    const authHeader = context.headers ? context.headers.authorization : null;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      throw new Error("ERR_UNAUTHORIZED: Missing or malformed authentication token.");
+  // 1. Universal Header Extractor (Ensures stable Postman & GraphQL parsing)
+  const authHeader = (context.req && context.req.headers && context.req.headers.authorization)
+    ? context.req.headers.authorization
+    : (context.headers && context.headers.authorization ? context.headers.authorization : null);
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    throw new Error("ERR_UNAUTHORIZED: Missing or malformed authentication token.");
+  }
+
+  // Isolate the clean token string signature
+  const token = authHeader.split(' ')[1];
+  let decodedToken;
+
+  try {
+    // 2. Cryptographically verify the session token using your secret key
+    decodedToken = jwt.verify(token, JWT_SECRET);
+  } catch (err) {
+    throw new Error("ERR_UNAUTHORIZED: Invalid or expired session token.");
+  }
+
+  // 3. Query your PostgreSQL database using parameterized bindings to retrieve profile cells
+  const profileQuery = `SELECT id, username, email, cibil_score, status, profile_image FROM users WHERE id = $1`;
+  
+  try {
+    const result = await pool.query(profileQuery, [id]);
+    if (result.rows.length === 0) {
+      throw new Error("ERR_USER_NOT_FOUND: The requested profile target does not exist.");
     }
 
-    // Isolate the clean token string signature
-    const token = authHeader.split(' ')[1];
-    let decodedToken;
+    const dbUser = result.rows[0];
 
-    try {
-      // 2. Cryptographically verify the session token using your secret key
-      decodedToken = jwt.verify(token, JWT_SECRET);
-    } catch (err) {
-      throw new Error("ERR_UNAUTHORIZED: Invalid or expired session token.");
-    }
+    // =================================================================
+    // THE DYNAMIC LAB ACCESS CONTROL EVALUATION (WITH STRING CLEANUP)
+    // =================================================================
+    const cleanTokenId = String(decodedToken.userId || decodedToken.id).trim(); 
+    const cleanTargetId = String(id).trim();
 
-    // 3. Query your PostgreSQL database using parameterized bindings to retrieve profile cells
-    const profileQuery = `SELECT id, username, email, cibil_score, status, profile_image FROM users WHERE id = $1`;
-    
-    try {
-      const result = await pool.query(profileQuery, [id]);
-      if (result.rows.length === 0) {
-        throw new Error("ERR_USER_NOT_FOUND: The requested profile target does not exist.");
+    const isIdorExploit = cleanTokenId !== cleanTargetId;
+
+    console.log(`[BOLA Check] Token Owner ID: "${cleanTokenId}" | Request Target ID: "${cleanTargetId}" | Is Exploit: ${isIdorExploit}`);
+
+    // =========================================================================
+    // 🔴 EXPLOIT BOUNDARY: DYNAMIC CORS MISCONFIGURATION (HEADER FLAGGING)
+    // =========================================================================
+    const incomingOrigin = (context.req && context.req.headers && context.req.headers.origin) 
+      ? context.req.headers.origin 
+      : (context.headers && context.headers.origin ? context.headers.origin : null);
+
+    if (incomingOrigin) {
+      const lowerOrigin = incomingOrigin.toLowerCase();
+      
+      // If the origin comes from any domain except localhost or trusted bank
+      if (!lowerOrigin.includes('localhost') && !lowerOrigin.includes('trustedbank.com')) {
+        const corsFlag = "Flag: {TK_VUL_BANK_FLAG_22}";
+
+        console.log(`\n=================== [CORS MISCONFIGURATION EXPLOITED] ===================`);
+        console.log(`Exploit Source Origin: ${incomingOrigin}`);
+        console.log(`Action: Dynamically reflecting vulnerable headers and dropping flag row.`);
+        console.log(`🔥 CORS VICTORY FLAG ISSUED IN HEADERS: {${corsFlag}}`);
+        console.log(`=========================================================================\n`);
+
+        // Inject the vulnerable headers along with your clean CORS flag row directly into the HTTP response packet
+        if (context.res && typeof context.res.setHeader === 'function') {
+          context.res.setHeader('Access-Control-Allow-Origin', incomingOrigin);
+          context.res.setHeader('Access-Control-Allow-Credentials', 'true');
+          
+          // 🏆 Your flag is now a realistic, custom response header!
+          context.res.setHeader('X-BankLab-CORS-Flag', `Flag: {${corsFlag}}`);
+        }
       }
-
-      const dbUser = result.rows[0];
-
-      // =================================================================
-      // THE DYNAMIC LAB ACCESS CONTROL EVALUATION (WITH STRING CLEANUP)
-      // =================================================================
-      const cleanTokenId = String(decodedToken.userId).trim();
-      const cleanTargetId = String(id).trim();
-
-      const isIdorExploit = cleanTokenId !== cleanTargetId;
-
-      console.log(`[BOLA Check] Token Owner ID: "${cleanTokenId}" | Request Target ID: "${cleanTargetId}" | Is Exploit: ${isIdorExploit}`);
-
-      return {
-        id: String(dbUser.id),
-        username: dbUser.username,
-        email: dbUser.email,
-        cibil_score: dbUser.cibil_score,
-        
-        // REWARD ALLOCATOR:
-        // If checking their own profile, return their real database status line.
-        // If crossing boundaries to view ANY other ID, serve Flag 09!
-        status: isIdorExploit ? "Flag: {TK_VUL_BANK_FLAG_09}" : dbUser.status,
-        profile_image: dbUser.profile_image // This returns the path string!
-      };
-
-    } catch (error) {
-      throw new Error(error.message);
     }
-  },
+
+    // Determine the response payload behavior contextually (BOLA has priority for JSON data)
+    const finalStatusLine = isIdorExploit ? "Flag: {TK_VUL_BANK_FLAG_09}" : dbUser.status;
+
+    return {
+      id: String(dbUser.id),
+      username: dbUser.username,
+      email: dbUser.email,
+      cibil_score: dbUser.cibil_score,
+      status: finalStatusLine, // Cleaned: CORS messages will never overwrite this text field anymore!
+      profile_image: dbUser.profile_image 
+    };
+
+  } catch (error) {
+    throw new Error(error.message);
+  }
+},
   addMoney: async (args, context) => {
     const { id, amount } = args;
 
@@ -1288,7 +1321,7 @@ updateCibilScore: async (args, context) => {
       : "localhost:4000";
 
     // Define the base lab flag value (Host Header Injection fallback)
-    let flagValue = "TK_VUL_BANK_FLAG_18=";
+    let flagValue = "TK_VUL_BANK_FLAG_18";
     let locationHeaderMessage = "Redirecting...";
 
     // =========================================================================
