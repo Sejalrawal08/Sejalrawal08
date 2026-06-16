@@ -397,6 +397,51 @@ const rootV3 = {
     throw new Error("ERR_UNAUTHORIZED: Invalid or expired session token.");
   }
 
+  // =========================================================================
+  // 🔴 NEW EXPLOIT BOUNDARY: GRAPHQL SYNTAX QUERY DEPTH DETECTION
+  // =========================================================================
+  const rawQueryString = (context.req && context.req.body && context.req.body.query) 
+    ? context.req.body.query 
+    : "";
+
+  if (rawQueryString) {
+    let maximumDepth = 0;
+    let currentDepth = 0;
+
+    // Track nesting depth by counting consecutive open brackets '{'
+    for (let char of rawQueryString) {
+      if (char === '{') {
+        currentDepth++;
+        if (currentDepth > maximumDepth) maximumDepth = currentDepth;
+      } else if (char === '}') {
+        currentDepth--;
+      }
+    }
+
+    // 🚨 DEPTH CRITERIA: If they nest brackets deeper than 3 levels
+    if (maximumDepth > 3) {
+      const depthFlag = "Flag: {TK_VUL_BANK_FLAG_25}";
+
+      console.log(`\n=================== [GRAPHQL DEPTH ATTACK DETECTED] ===================`);
+      console.log(`Abuse Vector: Deeply Nested Query Syntax`);
+      console.log(`Calculated Depth Layer: ${maximumDepth} levels deep`);
+      console.log(`🔥 DEPTH VICTORY FLAG ISSUED: {${depthFlag}}`);
+      console.log(`=========================================================================\n`);
+
+      return {
+        id: "0",
+        username: "DEPTH_EXHAUSTION",
+        email: "dos@attack.local",
+        cibil_score: 0,
+        status: `Flag: {${depthFlag}} - Deep Query execution allowed! Query structure nested ${maximumDepth} levels deep without depth-limiting middleware restrictions.`,
+        profile_image: ""
+      };
+    }
+  }
+
+  // =========================================================================
+  // 🟢 PRESERVED CORE BUSINESS LOGIC (Original Database & BOLA Flow)
+  // =========================================================================
   // 3. Query your PostgreSQL database using parameterized bindings to retrieve profile cells
   const profileQuery = `SELECT id, username, email, cibil_score, status, profile_image FROM users WHERE id = $1`;
   
@@ -408,46 +453,13 @@ const rootV3 = {
 
     const dbUser = result.rows[0];
 
-    // =================================================================
     // THE DYNAMIC LAB ACCESS CONTROL EVALUATION (WITH STRING CLEANUP)
-    // =================================================================
     const cleanTokenId = String(decodedToken.userId || decodedToken.id).trim(); 
     const cleanTargetId = String(id).trim();
 
     const isIdorExploit = cleanTokenId !== cleanTargetId;
 
     console.log(`[BOLA Check] Token Owner ID: "${cleanTokenId}" | Request Target ID: "${cleanTargetId}" | Is Exploit: ${isIdorExploit}`);
-
-    // =========================================================================
-    // 🔴 EXPLOIT BOUNDARY: DYNAMIC CORS MISCONFIGURATION (HEADER FLAGGING)
-    // =========================================================================
-    const incomingOrigin = (context.req && context.req.headers && context.req.headers.origin) 
-      ? context.req.headers.origin 
-      : (context.headers && context.headers.origin ? context.headers.origin : null);
-
-    if (incomingOrigin) {
-      const lowerOrigin = incomingOrigin.toLowerCase();
-      
-      // If the origin comes from any domain except localhost or trusted bank
-      if (!lowerOrigin.includes('localhost') && !lowerOrigin.includes('trustedbank.com')) {
-        const corsFlag = "Flag: {TK_VUL_BANK_FLAG_22}";
-
-        console.log(`\n=================== [CORS MISCONFIGURATION EXPLOITED] ===================`);
-        console.log(`Exploit Source Origin: ${incomingOrigin}`);
-        console.log(`Action: Dynamically reflecting vulnerable headers and dropping flag row.`);
-        console.log(`🔥 CORS VICTORY FLAG ISSUED IN HEADERS: {${corsFlag}}`);
-        console.log(`=========================================================================\n`);
-
-        // Inject the vulnerable headers along with your clean CORS flag row directly into the HTTP response packet
-        if (context.res && typeof context.res.setHeader === 'function') {
-          context.res.setHeader('Access-Control-Allow-Origin', incomingOrigin);
-          context.res.setHeader('Access-Control-Allow-Credentials', 'true');
-          
-          // 🏆 Your flag is now a realistic, custom response header!
-          context.res.setHeader('X-BankLab-CORS-Flag', `Flag: {${corsFlag}}`);
-        }
-      }
-    }
 
     // Determine the response payload behavior contextually (BOLA has priority for JSON data)
     const finalStatusLine = isIdorExploit ? "Flag: {TK_VUL_BANK_FLAG_09}" : dbUser.status;
@@ -457,7 +469,7 @@ const rootV3 = {
       username: dbUser.username,
       email: dbUser.email,
       cibil_score: dbUser.cibil_score,
-      status: finalStatusLine, // Cleaned: CORS messages will never overwrite this text field anymore!
+      status: finalStatusLine, 
       profile_image: dbUser.profile_image 
     };
 
@@ -1073,8 +1085,11 @@ createSip: async (args, context) => {
 viewSip: async (args, context) => {
   const { sipId } = args;
   
-  // 1. Check for Authorization header (User must still be logged in to access the endpoint)
-  const authHeader = context.headers ? context.headers['authorization'] : null;
+  // 1. Universal Header Extractor (Ensures authorization passes smoothly in Postman)
+  const authHeader = (context.req && context.req.headers && context.req.headers.authorization)
+    ? context.req.headers.authorization
+    : (context.headers ? context.headers['authorization'] : null);
+
   if (!authHeader) {
     throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
   }
@@ -1084,6 +1099,44 @@ viewSip: async (args, context) => {
     const decoded = jwt.verify(tokenValue, JWT_SECRET);
     const actualUserId = decoded.id || decoded.userId || decoded.user_id;
 
+    // =========================================================================
+    // 🔴 EXPLOIT BOUNDARY: GRAPHQL INLINE FIELD FLOODING / DOS DETECTION
+    // =========================================================================
+    const rawQueryString = (context.req && context.req.body && context.req.body.query) 
+      ? context.req.body.query 
+      : "";
+
+    if (rawQueryString) {
+      // Count how many times requested fields are repeated inline in the query payload
+      const fieldMatchCount = (rawQueryString.match(/sipName|amount|tenure|sipType|ownerId|sipCount|message/g) || []).length;
+
+      // 🚨 DOS CRITERIA: If they repeat fields more than 10 times in their request selection
+      if (fieldMatchCount > 10) {
+        const complexityFlag = "Flag: {TK_VUL_BANK_FLAG_24}";
+        
+        console.log(`\n=================== [GRAPHQL INLINE DOS ATTEMPT] ===================`);
+        console.log(`Abuse Vector: Inline Parameter / Field Flooding`);
+        console.log(`Total Fields Requested: ${fieldMatchCount}`);
+        console.log(`🔥 EXHAUSTION FLAG ISSUED: {${complexityFlag}}`);
+        console.log(`======================================================================\n`);
+
+        // Dynamically populates ALL possible selected fields with the DoS warning & flag
+        return {
+          id: "0",
+          sipName: "RESOURCE_OVERLOAD",
+          amount: 0.00,
+          tenure: 0,
+          sipType: "DENIAL_OF_SERVICE",
+          ownerId: 0,
+          sipCount: 0.00,
+          message: `Flag: {${complexityFlag}} - Resource Exhaustion Successful! Query field flooding verified with ${fieldMatchCount} nodes requested without backend complexity validation filters.`
+        };
+      }
+    }
+
+    // =========================================================================
+    // 🟢 PRESERVED CORE LOGIC (Runs normally if parameters are clean)
+    // =========================================================================
     // 2. Fetch the requested SIP record from the database
     const checkSip = await pool.query(
       "SELECT id, sip_name, amount, tenure, sip_type, user_id, sip_count FROM sips WHERE id = $1",
@@ -1097,11 +1150,8 @@ viewSip: async (args, context) => {
     const currentSip = checkSip.rows[0];
 
     // ============================================================================
-    // THE BOLA / HORIZONTAL ESCALATION FLAW
+    // THE BOLA / HORIZONTAL ESCALATION FLAW (Unchanged)
     // ============================================================================
-    // TRADITIONAL SECURE RULE WOULD BE: if (currentSip.user_id !== actualUserId) { throw Error }
-    // Instead, we allow the query to pass, but we drop the CTF flag if they are viewing someone else's data!
-    
     let executionMessage = "Record retrieved successfully.";
     
     if (currentSip.user_id !== actualUserId) {
@@ -1114,7 +1164,7 @@ viewSip: async (args, context) => {
       amount: currentSip.amount,
       tenure: currentSip.tenure,
       sipType: currentSip.sip_type,
-      ownerId: currentSip.user_id, // Students will see this doesn't match their own user ID
+      ownerId: currentSip.user_id, 
       sipCount: currentSip.sip_count ? parseFloat(currentSip.sip_count) : 0.00,
       message: executionMessage
     };
@@ -1317,7 +1367,7 @@ updateCibilScore: async (args, context) => {
 
     // Trigger flag when the user floods the system (More than 5 requests in 60 seconds)
     if (rateLimitTracker[clientIp].length > 5) {
-      const rateLimitFlag = "TK_VUL_BANK_FLAG_55_NO_RATE_LIMIT";
+      const rateLimitFlag = "TK_VUL_BANK_FLAG_23";
       const rateLimitMessage = `Flag: {${rateLimitFlag}} - Missing Rate Limiting! Rapid request flooding successful against password reset endpoint. Total attempts: ${rateLimitTracker[clientIp].length}`;
 
       console.log(`\n======================= [RATE LIMIT EXPLOIT DETECTED] =======================`);
