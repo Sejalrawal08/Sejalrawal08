@@ -1783,3 +1783,78 @@ internalApp.listen(4005, '0.0.0.0', () => {
   console.log('V1 Exploitable SSRF: http://localhost:4005/api/v1/internal-status');
   
 });
+
+// =========================================================================
+// 🔴 NEW LAB CONFIGURATION: DEDICATED FFUF SCANNING PORT CHALLENGE
+// =========================================================================
+// =========================================================================
+// 🔴 LAB CONFIGURATION: DEDICATED GRAPHQL FUZZING PORT CHALLENGE (8081)
+// =========================================================================
+const express8081 = express(); 
+const FUZZ_PORT = 8081;
+
+express8081.use(express.json());
+
+// 1. Define your real project endpoints here
+const projectEndpoints = [
+  "viewProfile",
+  "getUserBalance",
+  "login",
+  "addmoney",
+  "createloan",
+  "TK_VUL_BANK_FLAG_26_FFUF_DISCOVERY"
+];
+
+// NEW ADDITION: Secret static file backdoor endpoint
+express8081.get('/common.txt', (req, res) => {
+  return res.sendFile(path.join(__dirname, 'files', 'common.txt'));
+  // const secretFlag = "TK_VUL_BANK_FLAG_26_FFUF_DISCOVERY";
+  
+  // console.log(`\n=================== [STATIC FILE DISCOVERY PORT 8081 SUCCESSFUL] ===================`);
+  // console.log(`Abuse Vector: Sensitive File Exposure on Open Port`);
+  // console.log(`Accessed Resource: /common.txt via Port 8081`);
+  // console.log(`🔥 DISCOVERY FLAG ISSUED: {${secretFlag}}`);
+  // console.log(`====================================================================================\n`);
+
+  // // Set response type to plain text and deliver the flag string cleanly
+  // res.setHeader('Content-Type', 'text/plain');
+  // res.sendFile(path.join(__dirname, 'files', 'common.txt'));
+  // return res.status(200).send(`Congratulations! Flag: {${secretFlag}} - You successfully discovered the hidden text asset on port 8081.`);
+});
+
+// express8081.post('/graphql', (req, res) => {
+//   const queryBody = req.body && req.body.query ? req.body.query : "";
+
+//   // 2. Loop through your endpoints to see which one the student successfully fuzzed
+//   for (const endpoint of projectEndpoints) {
+//     if (queryBody.includes(endpoint)) {
+//       const ffufFlag = "TK_VUL_BANK_FLAG_26_FFUF_DISCOVERY";
+
+//       console.log(`\n=================== [GRAPHQL FFUF PORT 8081 SUCCESSFUL] ===================`);
+//       console.log(`Abuse Vector: GraphQL Target Discovery on Alternate Ports`);
+//       console.log(`Discovered Field: ${endpoint} via Port 8081`);
+//       console.log(`🔥 DISCOVERY FLAG ISSUED: {${ffufFlag}}`);
+//       console.log(`===========================================================================\n`);
+
+//       // Dynamically craft a GraphQL response matching the fuzzed endpoint name
+//       const responseData = {};
+//       responseData[endpoint] = `Congratulations! Flag: {${ffufFlag}} - You successfully fuzzed and discovered the hidden ${endpoint} endpoint configuration on port 8081.`;
+
+//       return res.status(200).json({ data: responseData});
+//     }
+//   }
+
+//   // 3. Generic GraphQL Error response for wrong fuzzing guesses
+//   return res.status(400).json({
+//     errors: [
+//       {
+//         message: "Cannot query field \"unknown\" on type \"Query\".",
+//         locations: [{ line: 2, column: 3 }]
+//       }
+//     ]
+//   });
+// });
+
+express8081.listen(FUZZ_PORT, "0.0.0.0" ,() => {
+  console.log(`[LAB CONFIG] Secondary GraphQL Fuzzing Target active at: http://0.0.0.0:${FUZZ_PORT}/graphql`);
+});
