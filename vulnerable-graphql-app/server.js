@@ -1548,16 +1548,33 @@ executePasswordReset: async (args) => {
 const app = express();
 const internalApp = express();
 
+
 // 1. GLOBAL REST BODY PARSERS (PLACE HERE)
 // ==========================================
 // These must run first so they can read the incoming JSON data from Postman
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+//app.use(express.json());
+// 1. GLOBAL REST BODY PARSERS
+// ==========================================
+app.use(express.json({
+  limit: '15mb',
+  verify: (req, res, buf) => {
+    if (req.url && req.url.includes('/api/v3/graphql')) {
+      req.rawBodyText = buf.toString('utf8');
+    }
+  }
+}));
+
+//app.use(express.urlencoded({ limit: '15mb', extended: true }));
+
+
+//app.use(express.urlencoded({ extended: true }));
+//app.use(express.urlencoded({ limit: '15mb', extended: true }));
 
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
 app.use(express.static(path.join(__dirname, 'public')));
 
-internalApp.use(express.json());
+//internalApp.use(express.json());
+
 internalApp.use(express.urlencoded({ extended: true }));
 // ==========================================
 // BODY PARSING MIDDLEWARE (CRITICAL FIX FOR 404)
@@ -1608,6 +1625,32 @@ app.use((req, res, next) => {
   }
   next();
 });
+app.use('/api/v3/graphql', (req, res, next) => {
+  const contentHeaderLen = parseInt(req.headers['content-length'] || '0', 10);
+  const rawText = req.rawBodyText || "";
+  const realBodyLen = Buffer.byteLength(rawText, 'utf8');
+
+  const hasSmuggledSignatures = rawText.includes('POST /') || rawText.includes('HTTP/1.1');
+  if (contentHeaderLen > 0 && contentHeaderLen < realBodyLen && hasSmuggledSignatures) {
+    const smugglingFlag = "TK_VUL_BANK_FLAG_15_REQ_SMUGGLING";
+    
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(200).json({
+      errors: [{ message: `HTTP Request Smuggling Vulnerability Exploited! Flag: {${smugglingFlag}}` }]
+    });
+  }
+
+  next();
+});
+// =========================================================================
+//
+// =========================================================================
+// 🔴 GRAPHQL LOGIN ROUTE REQUEST SMUGGLING GATEKEEPER
+// =========================================================================
+// =========================================================================
+// 🔴 DYNAMIC PARSED BODY SMUGGLING GATEKEEPER
+// =========================================================================
+
 
 // ROUTE SEGREGATION: Mounted strictly on the V3 path to protect V1 spaces
 app.use('/api/v3/graphql', graphqlHTTP((req, res) => ({
