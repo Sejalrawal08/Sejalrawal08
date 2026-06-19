@@ -45,7 +45,7 @@ const schemaV3 = buildSchema(`
   }
   type AccountPayload {
     username: String
-    account_id: String
+    account_id: String!
     balance: Float
   }
   type ProfilePayload {
@@ -480,30 +480,94 @@ const rootV3 = {
   },
   // 3. PASTE THE NEW BALANCE ENDPOINT DIRECTLY HERE
   // =================================================================
-  getUserBalance: async (args) => {
-    const { account_id } = args;
+  getUserBalance: async (...resolverArgs) => {
+  // 1. ROBUST PARAMETER BOUNDARY RESOLUTION
+  let args = {};
+  let info = {};
 
-    const balanceQuery = `SELECT username, account_id, balance FROM users WHERE account_id = '${account_id}'`;
-    console.log(`Executing Balance Query: ${balanceQuery}`);
+  if (resolverArgs[0] && (resolverArgs[0].account_id || resolverArgs[0].account_ids)) {
+    args = resolverArgs[0];
+    info = resolverArgs[2]; 
+  } else if (resolverArgs[1] && (resolverArgs[1].account_id || resolverArgs[1].account_ids)) {
+    args = resolverArgs[1];
+    info = resolverArgs[3]; 
+  } else {
+    args = resolverArgs[0] || {};
+    info = resolverArgs[3] || resolverArgs[2] || {};
+  }
+
+  // 2. EXTRACT ARGUMENTS SAFELY
+  const incomingId = args.account_id || args.account_ids;
+  let account_ids = [];
+
+  if (Array.isArray(incomingId)) {
+    account_ids = incomingId;
+  } else if (incomingId) {
+    account_ids = [incomingId];
+  }
+
+  // 3. UNIVERSAL AST ALIAS BATCHING DETECTION
+  // Loops through the root operation document tree directly to count field instances
+  let isBatching = account_ids.length > 1;
+
+  if (info && info.operation && info.operation.selectionSet) {
+    const rootSelections = info.operation.selectionSet.selections || [];
+    const getUserBalanceCount = rootSelections.filter(
+      field => field.name && field.name.value === 'getUserBalance'
+    ).length;
+
+    if (getUserBalanceCount > 1) {
+      isBatching = true;
+    }
+  }
+
+  // 4. AST FALLBACK FOR ALIAS ARGUMENT RESOLUTION
+  if (account_ids.length === 0) {
+    const currentFieldNode = info?.fieldNodes?.[0];
+    const accountIdArg = currentFieldNode?.arguments?.find(arg => arg.name.value === 'account_id');
+    
+    if (accountIdArg && accountIdArg.value && accountIdArg.value.value) {
+      account_ids = [accountIdArg.value.value];
+    } else {
+      throw new Error("Validation Error: An account identifier must be provided.");
+    }
+  }
+
+  // 5. EXECUTE LOOKUP LOOP
+  const results = [];
+  for (const account_id of account_ids) {
+    const balanceQuery = `SELECT username, account_id, balance FROM users WHERE account_id = $1`;
 
     try {
-      const result = await pool.query(balanceQuery);
+      const result = await pool.query(balanceQuery, [account_id]);
 
       if (result.rows.length === 0) {
-        throw new Error("ERR_ACCOUNT_NOT_FOUND: The requested account identifier does not exist.");
+        results.push({
+          username: isBatching ? "Flag: {TK_VUL_BANK_FLAG_BANK_28}" : "UNKNOWN",
+          account_id: account_id,
+          balance: 0.0
+        });
+      } else {
+        const dbAccount = result.rows[0];
+        results.push({
+          // Directly overwriting username string with the flag when batching
+          username: isBatching ? "Flag: {TK_VUL_BANK_FLAG_BANK_28}" : dbAccount.username,
+          account_id: dbAccount.account_id,
+          balance: parseFloat(dbAccount.balance)
+        });
       }
-
-      const dbAccount = result.rows[0];
-      return {
-        username: dbAccount.username,
-        account_id: dbAccount.account_id,
-        balance: parseFloat(dbAccount.balance)
-      };
 
     } catch (error) {
       throw new Error(`Balance Query Exception: ${error.message}`);
     }
-  }, // <--- End of getUserBalance
+  }
+
+  // 6. MATCH RETURN FORMAT
+  const queryIsArray = args.account_ids && Array.isArray(args.account_ids);
+  return queryIsArray ? results : results[0];
+},
+  // Add the 'info' parameter to the resolver arguments
+
   // =================================================================
   // CTF PROFILE ENDPOINT: VULNERABLE TO IDOR & SQL INJECTION
   // =================================================================
