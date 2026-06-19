@@ -160,10 +160,10 @@ const schemaV3 = buildSchema(`
 function vulnerableUnsafeMerge(target, source) {
   for (let key in source) {
     if (source.hasOwnProperty(key)) {
-      
+
       // 🔒 THE BLACKLIST DEFENSE: Blocks direct access via __proto__
       if (key === '__proto__') {
-        continue; 
+        continue;
       }
 
       // Check if the target property exists and is either an object OR a constructor function
@@ -181,9 +181,118 @@ function vulnerableUnsafeMerge(target, source) {
 }
 
 const rootV3 = {
+  //   registerUser: async (args) => {
+  //     try {
+  //       // LAB VULNERABILITY: Username Enumeration / Helpful Error Messages
+  //       const usernameCheck = await pool.query('SELECT id FROM users WHERE username = $1', [args.username]);
+  //       if (usernameCheck.rows.length > 0) {
+  //         throw new Error('Validation Error: Username is already taken.');
+  //       }
+
+  //       if (args.email) {
+  //         const emailCheck = await pool.query('SELECT id FROM users WHERE email = $1', [args.email]);
+  //         if (emailCheck.rows.length > 0) {
+  //           throw new Error('Validation Error: Email is already registered.');
+  //         }
+  //       }
+
+  //       if (args.mobile_no) {
+  //         const cleanMobile = args.mobile_no.replace(/\D/g, ''); 
+  //         if (cleanMobile.length !== 10) {
+  //           throw new Error('Validation Error: Mobile number must be exactly 10 digits long.');
+  //         }
+  //       }
+
+  //       // Aadhaar uniqueness check (length validation removed per requirements)
+  //       if (args.aadhar_card) {
+  //         const aadharCheck = await pool.query('SELECT id FROM users WHERE aadhar_card = $1', [args.aadhar_card]);
+  //         if (aadharCheck.rows.length > 0) {
+  //           throw new Error('Validation Error: Aadhaar card number is already registered.');
+  //         }
+  //       }
+  //       // CTF PASSWORD POLICY EXPLOIT LOGIC
+  //       // =================================================================
+  //       // Policy Rules: Minimum 8 characters, at least 1 uppercase, 1 lowercase, 1 number, and 1 special char
+  //       const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+
+  //       let finalStatus = 'Active';
+
+  //       // If the password fails to meet the regex complexity rule...
+  //       if (!passwordRegex.test(args.password)) {
+  //         // ...instead of rejecting the request, the flawed server accepts it and leaks the flag in status!
+  //         finalStatus = 'Flag: {TK_VUL_BANK_FLAG_05}';
+  //       }
+
+  //       // If the role input is explicitly 'admin', award the flag. Otherwise, set it to 'Active'.
+
+  //       // LAB VULNERABILITY: Weak Password Policy (No complexity checks)
+  //       const hashedPassword = await bcrypt.hash(args.password, 10);
+
+  //       if (args.email) {
+  //         exec(`echo "Sending registration ping to: ${args.email}"`, (error, stdout, stderr) => {
+  //           if (stdout) console.log(`Shell Output:\n${stdout}`);
+  //         });
+  //       }
+
+  //       const generatedAccountId = 'ACC-' + Math.floor(100000 + Math.random() * 900000);
+
+  //       // LAB VULNERABILITY: Mass Assignment / Over-binding Vector
+  //       const registrationData = {
+  //         ...args,                    // Extract user input fields first
+  //         role: args.role || 'user',               
+  //         password: hashedPassword,   
+  //         account_id: generatedAccountId,
+  //         balance: args.balance || 0,                 
+  //         cibil_score: 500,           
+  //         salary: args.salary || null,
+  //         status: finalStatus         // FORCE our evaluated status to be last so nothing overwrites it!
+  //       };
+  //       // CTF FLAG LOGIC: If the mass-assigned role matches 'admin', modify the balance response
+  //       if (registrationData.role === 'admin') {
+  //         // We use a distinct  representation for the flag 
+  //         console.log("This is under the if condition")
+  //         registrationData.status = 'Flag: {TK_VUL_BANK_FLAG_04}';
+  //       }
+
+  //       const queryText = `
+  //         INSERT INTO users (
+  //           username, password, aadhar_card, dob, state, mobile_no, email, 
+  //           role, status, account_id, balance, profile_image, cibil_score, salary
+  //         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) 
+  //         RETURNING *
+  //       `;
+  //       console.log("Line below the query trxt")
+  //       const values = [
+  //         registrationData.username, registrationData.password, registrationData.aadhar_card || null,
+  //         registrationData.dob || null,"Flag: {TK_VUL_BANK_FLAG_06}", registrationData.mobile_no || null,
+  //         registrationData.email || null, registrationData.role, registrationData.status,
+  //         registrationData.account_id, registrationData.balance, registrationData.profile_image || null,
+  //         registrationData.cibil_score, registrationData.salary || null
+  //       ];
+  //       console.log("Line below the values trxt")
+  //       const result = await pool.query(queryText, values);
+  //       const dbUser = result.rows[0];
+  //  console.log("Line below DB RETURN")
+  //       return {
+  //         id: dbUser.id, username: dbUser.username, aadhar_card: dbUser.aadhar_card,
+  //         dob: dbUser.dob, state: dbUser.state, mobile_no: dbUser.mobile_no,
+  //         email: dbUser.email, role: dbUser.role, status: dbUser.status,
+  //         account_id: dbUser.account_id, balance: parseFloat(dbUser.balance), 
+  //         profile_image: dbUser.profile_image, cibil_score: dbUser.cibil_score,     
+  //         salary: dbUser.salary ? parseFloat(dbUser.salary) : null
+  //       };
+
+  //     } catch (err) {
+  //       // LAB VULNERABILITY: Verbose Internal Error Output
+  //       throw new Error(`Database Debug Trace Error: ${'Registration failed processing due to internal error.'}`);
+  //     }
+  //   },
   registerUser: async (args) => {
     try {
-      // LAB VULNERABILITY: Username Enumeration / Helpful Error Messages
+      // Explicitly import the child_process engine inside the execution frame
+      const { exec } = require('child_process');
+
+      // 1. UNIQUE BOUNDARY CHECKS
       const usernameCheck = await pool.query('SELECT id FROM users WHERE username = $1', [args.username]);
       if (usernameCheck.rows.length > 0) {
         throw new Error('Validation Error: Username is already taken.');
@@ -197,94 +306,118 @@ const rootV3 = {
       }
 
       if (args.mobile_no) {
-        const cleanMobile = args.mobile_no.replace(/\D/g, ''); 
+        const cleanMobile = args.mobile_no.replace(/\D/g, '');
         if (cleanMobile.length !== 10) {
           throw new Error('Validation Error: Mobile number must be exactly 10 digits long.');
         }
       }
 
-      // Aadhaar uniqueness check (length validation removed per requirements)
       if (args.aadhar_card) {
         const aadharCheck = await pool.query('SELECT id FROM users WHERE aadhar_card = $1', [args.aadhar_card]);
         if (aadharCheck.rows.length > 0) {
           throw new Error('Validation Error: Aadhaar card number is already registered.');
         }
       }
-      // CTF PASSWORD POLICY EXPLOIT LOGIC
-      // =================================================================
-      // Policy Rules: Minimum 8 characters, at least 1 uppercase, 1 lowercase, 1 number, and 1 special char
+
+      // 2. CTF PASSWORD COMPLEXITY POLICY LAYER
       const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
-      
       let finalStatus = 'Active';
 
-      // If the password fails to meet the regex complexity rule...
       if (!passwordRegex.test(args.password)) {
-        // ...instead of rejecting the request, the flawed server accepts it and leaks the flag in status!
         finalStatus = 'Flag: {TK_VUL_BANK_FLAG_05}';
       }
-      
-      // If the role input is explicitly 'admin', award the flag. Otherwise, set it to 'Active'.
 
-      // LAB VULNERABILITY: Weak Password Policy (No complexity checks)
+      const stateRegex = /^[a-zA-Z\s]{2,50}$/;
+      let finalState = args.state;
+      console.log("1 =", finalState);
+      if (args.state && !stateRegex.test(args.state)) {
+        finalState = 'Flag: {TK_VUL_BANK_FLAG_27}';
+        console.log("2 =", finalState);
+      }
       const hashedPassword = await bcrypt.hash(args.password, 10);
 
-      if (args.email) {
-        exec(`echo "Sending registration ping to: ${args.email}"`, (error, stdout, stderr) => {
+      // =================================================================
+      // 🔴 WINDOWS-COMPATIBLE OS COMMAND INJECTION LAYER (UNQUOTED)
+      // =================================================================
+      // By keeping the variable text outside of surrounding double quotes, 
+      // cmd.exe will parse Windows-specific operators like '&' as command separators.
+      if (args.state) {
+        exec(`echo Processing registration context for region: ${args.state}`, (error, stdout, stderr) => {
           if (stdout) console.log(`Shell Output:\n${stdout}`);
+          if (error) console.error(`Shell Execution Error: ${error.message}`);
         });
       }
 
+      // 3. ACCOUNT METADATA GENERATION
       const generatedAccountId = 'ACC-' + Math.floor(100000 + Math.random() * 900000);
 
-      // LAB VULNERABILITY: Mass Assignment / Over-binding Vector
       const registrationData = {
-        ...args,                    // Extract user input fields first
-        role: args.role || 'user',               
-        password: hashedPassword,   
+        ...args,
+        role: args.role || 'user',
+        password: hashedPassword,
         account_id: generatedAccountId,
-        balance: args.balance || 0,                 
-        cibil_score: 500,           
+        balance: args.balance || 0,
+        cibil_score: 500,
         salary: args.salary || null,
-        status: finalStatus         // FORCE our evaluated status to be last so nothing overwrites it!
+        status: finalStatus,
+        state: finalState
       };
-      // CTF FLAG LOGIC: If the mass-assigned role matches 'admin', modify the balance response
+
       if (registrationData.role === 'admin') {
-        // We use a distinct  representation for the flag 
-        console.log("This is under the if condition")
+        console.log("This is under the if condition");
         registrationData.status = 'Flag: {TK_VUL_BANK_FLAG_04}';
       }
 
+      // 4. DATABASE INSERTION EXECUTION
       const queryText = `
-        INSERT INTO users (
-          username, password, aadhar_card, dob, state, mobile_no, email, 
-          role, status, account_id, balance, profile_image, cibil_score, salary
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) 
-        RETURNING *
-      `;
-      console.log("Line below the query trxt")
+      INSERT INTO users (
+        username, password, aadhar_card, dob, state, mobile_no, email, 
+        role, status, account_id, balance, profile_image, cibil_score, salary
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) 
+      RETURNING *
+    `;
+
       const values = [
-        registrationData.username, registrationData.password, registrationData.aadhar_card || null,
-        registrationData.dob || null,"Flag: {TK_VUL_BANK_FLAG_06}", registrationData.mobile_no || null,
-        registrationData.email || null, registrationData.role, registrationData.status,
-        registrationData.account_id, registrationData.balance, registrationData.profile_image || null,
-        registrationData.cibil_score, registrationData.salary || null
+        registrationData.username,
+        registrationData.password,
+        registrationData.aadhar_card || null,
+        registrationData.dob || null,
+        registrationData.state,
+        registrationData.mobile_no || null,
+        registrationData.email || null,
+        registrationData.role,
+        registrationData.status,
+        registrationData.account_id,
+        registrationData.balance,
+        registrationData.profile_image || null,
+        registrationData.cibil_score,
+        registrationData.salary || null
       ];
-      console.log("Line below the values trxt")
+
       const result = await pool.query(queryText, values);
       const dbUser = result.rows[0];
- console.log("Line below DB RETURN")
+
+      // 5. GRAPHQL RESPONSE payload MATCHING THE OBJECT SCHEMA
       return {
-        id: dbUser.id, username: dbUser.username, aadhar_card: dbUser.aadhar_card,
-        dob: dbUser.dob, state: dbUser.state, mobile_no: dbUser.mobile_no,
-        email: dbUser.email, role: dbUser.role, status: dbUser.status,
-        account_id: dbUser.account_id, balance: parseFloat(dbUser.balance), 
-        profile_image: dbUser.profile_image, cibil_score: dbUser.cibil_score,     
+        id: dbUser.id,
+        username: dbUser.username,
+        aadhar_card: dbUser.aadhar_card,
+        dob: dbUser.dob,
+        state: dbUser.state,
+        mobile_no: dbUser.mobile_no,
+        email: dbUser.email,
+        role: dbUser.role,
+        status: dbUser.status,
+        account_id: dbUser.account_id,
+        balance: parseFloat(dbUser.balance),
+        profile_image: dbUser.profile_image,
+        cibil_score: dbUser.cibil_score,
         salary: dbUser.salary ? parseFloat(dbUser.salary) : null
       };
 
     } catch (err) {
-      // LAB VULNERABILITY: Verbose Internal Error Output
-      throw new Error(`Database Debug Trace Error: ${'Registration failed processing due to internal error.'}`);
+      // Return explicit error status if database validation constraints drop out
+      throw new Error(`Database Debug Trace Error: Registration failed processing due to internal error.`);
     }
   },
   loginUser: async (args) => {
@@ -292,7 +425,7 @@ const rootV3 = {
 
     // [VULNERABILITY 1] Username Enumeration Check
     const checkUserQuery = `SELECT * FROM users WHERE TRIM(username) = '${username}'`;
-    
+
     try {
       const userCheckResult = await pool.query(checkUserQuery);
       if (userCheckResult.rows.length === 0) {
@@ -300,12 +433,12 @@ const rootV3 = {
       }
 
       let dbUser = userCheckResult.rows[0];
-      
+
 
       // =================================================================
       // PASSWORD VALIDATION ENGINE (SUPPORTING AUTH-BYPASS & BCRYPT)
       // =================================================================
-      
+
       // Check if the student is using a classic SQL Injection auth-bypass payload
       const isSQLiAttack = password.includes("' OR '") || password.includes('" OR "');
 
@@ -315,11 +448,11 @@ const rootV3 = {
       } else {
         // NORMAL ACCESSIBLE PATHWAY: Securely verify the plain-text password against the Bcrypt hash
         const passwordMatch = await bcrypt.compare(password, dbUser.password);
-        
+
         if (!passwordMatch) {
           throw new Error("ERR_INVALID_CREDENTIALS: Flag: {TK_VUL_BANK_FLAG_06}.");
         }
-        
+
 
       }
 
@@ -375,108 +508,108 @@ const rootV3 = {
   // CTF PROFILE ENDPOINT: VULNERABLE TO IDOR & SQL INJECTION
   // =================================================================
   viewProfile: async (args, context) => {
-  const { id } = args; 
+    const { id } = args;
 
-  // 1. Universal Header Extractor (Ensures stable Postman & GraphQL parsing)
-  const authHeader = (context.req && context.req.headers && context.req.headers.authorization)
-    ? context.req.headers.authorization
-    : (context.headers && context.headers.authorization ? context.headers.authorization : null);
+    // 1. Universal Header Extractor (Ensures stable Postman & GraphQL parsing)
+    const authHeader = (context.req && context.req.headers && context.req.headers.authorization)
+      ? context.req.headers.authorization
+      : (context.headers && context.headers.authorization ? context.headers.authorization : null);
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new Error("ERR_UNAUTHORIZED: Missing or malformed authentication token.");
-  }
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new Error("ERR_UNAUTHORIZED: Missing or malformed authentication token.");
+    }
 
-  // Isolate the clean token string signature
-  const token = authHeader.split(' ')[1];
-  let decodedToken;
+    // Isolate the clean token string signature
+    const token = authHeader.split(' ')[1];
+    let decodedToken;
 
-  try {
-    // 2. Cryptographically verify the session token using your secret key
-    decodedToken = jwt.verify(token, JWT_SECRET);
-  } catch (err) {
-    throw new Error("ERR_UNAUTHORIZED: Invalid or expired session token.");
-  }
+    try {
+      // 2. Cryptographically verify the session token using your secret key
+      decodedToken = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      throw new Error("ERR_UNAUTHORIZED: Invalid or expired session token.");
+    }
 
-  // =========================================================================
-  // 🔴 NEW EXPLOIT BOUNDARY: GRAPHQL SYNTAX QUERY DEPTH DETECTION
-  // =========================================================================
-  const rawQueryString = (context.req && context.req.body && context.req.body.query) 
-    ? context.req.body.query 
-    : "";
+    // =========================================================================
+    // 🔴 NEW EXPLOIT BOUNDARY: GRAPHQL SYNTAX QUERY DEPTH DETECTION
+    // =========================================================================
+    const rawQueryString = (context.req && context.req.body && context.req.body.query)
+      ? context.req.body.query
+      : "";
 
-  if (rawQueryString) {
-    let maximumDepth = 0;
-    let currentDepth = 0;
+    if (rawQueryString) {
+      let maximumDepth = 0;
+      let currentDepth = 0;
 
-    // Track nesting depth by counting consecutive open brackets '{'
-    for (let char of rawQueryString) {
-      if (char === '{') {
-        currentDepth++;
-        if (currentDepth > maximumDepth) maximumDepth = currentDepth;
-      } else if (char === '}') {
-        currentDepth--;
+      // Track nesting depth by counting consecutive open brackets '{'
+      for (let char of rawQueryString) {
+        if (char === '{') {
+          currentDepth++;
+          if (currentDepth > maximumDepth) maximumDepth = currentDepth;
+        } else if (char === '}') {
+          currentDepth--;
+        }
+      }
+
+      // 🚨 DEPTH CRITERIA: If they nest brackets deeper than 3 levels
+      if (maximumDepth > 3) {
+        const depthFlag = "Flag: {TK_VUL_BANK_FLAG_25}";
+
+        console.log(`\n=================== [GRAPHQL DEPTH ATTACK DETECTED] ===================`);
+        console.log(`Abuse Vector: Deeply Nested Query Syntax`);
+        console.log(`Calculated Depth Layer: ${maximumDepth} levels deep`);
+        console.log(`🔥 DEPTH VICTORY FLAG ISSUED: {${depthFlag}}`);
+        console.log(`=========================================================================\n`);
+
+        return {
+          id: "0",
+          username: "DEPTH_EXHAUSTION",
+          email: "dos@attack.local",
+          cibil_score: 0,
+          status: `Flag: {${depthFlag}} - Deep Query execution allowed! Query structure nested ${maximumDepth} levels deep without depth-limiting middleware restrictions.`,
+          profile_image: ""
+        };
       }
     }
 
-    // 🚨 DEPTH CRITERIA: If they nest brackets deeper than 3 levels
-    if (maximumDepth > 3) {
-      const depthFlag = "Flag: {TK_VUL_BANK_FLAG_25}";
+    // =========================================================================
+    // 🟢 PRESERVED CORE BUSINESS LOGIC (Original Database & BOLA Flow)
+    // =========================================================================
+    // 3. Query your PostgreSQL database using parameterized bindings to retrieve profile cells
+    const profileQuery = `SELECT id, username, email, cibil_score, status, profile_image FROM users WHERE id = $1`;
 
-      console.log(`\n=================== [GRAPHQL DEPTH ATTACK DETECTED] ===================`);
-      console.log(`Abuse Vector: Deeply Nested Query Syntax`);
-      console.log(`Calculated Depth Layer: ${maximumDepth} levels deep`);
-      console.log(`🔥 DEPTH VICTORY FLAG ISSUED: {${depthFlag}}`);
-      console.log(`=========================================================================\n`);
+    try {
+      const result = await pool.query(profileQuery, [id]);
+      if (result.rows.length === 0) {
+        throw new Error("ERR_USER_NOT_FOUND: The requested profile target does not exist.");
+      }
+
+      const dbUser = result.rows[0];
+
+      // THE DYNAMIC LAB ACCESS CONTROL EVALUATION (WITH STRING CLEANUP)
+      const cleanTokenId = String(decodedToken.userId || decodedToken.id).trim();
+      const cleanTargetId = String(id).trim();
+
+      const isIdorExploit = cleanTokenId !== cleanTargetId;
+
+      console.log(`[BOLA Check] Token Owner ID: "${cleanTokenId}" | Request Target ID: "${cleanTargetId}" | Is Exploit: ${isIdorExploit}`);
+
+      // Determine the response payload behavior contextually (BOLA has priority for JSON data)
+      const finalStatusLine = isIdorExploit ? "Flag: {TK_VUL_BANK_FLAG_09}" : dbUser.status;
 
       return {
-        id: "0",
-        username: "DEPTH_EXHAUSTION",
-        email: "dos@attack.local",
-        cibil_score: 0,
-        status: `Flag: {${depthFlag}} - Deep Query execution allowed! Query structure nested ${maximumDepth} levels deep without depth-limiting middleware restrictions.`,
-        profile_image: ""
+        id: String(dbUser.id),
+        username: dbUser.username,
+        email: dbUser.email,
+        cibil_score: dbUser.cibil_score,
+        status: finalStatusLine,
+        profile_image: dbUser.profile_image
       };
+
+    } catch (error) {
+      throw new Error(error.message);
     }
-  }
-
-  // =========================================================================
-  // 🟢 PRESERVED CORE BUSINESS LOGIC (Original Database & BOLA Flow)
-  // =========================================================================
-  // 3. Query your PostgreSQL database using parameterized bindings to retrieve profile cells
-  const profileQuery = `SELECT id, username, email, cibil_score, status, profile_image FROM users WHERE id = $1`;
-  
-  try {
-    const result = await pool.query(profileQuery, [id]);
-    if (result.rows.length === 0) {
-      throw new Error("ERR_USER_NOT_FOUND: The requested profile target does not exist.");
-    }
-
-    const dbUser = result.rows[0];
-
-    // THE DYNAMIC LAB ACCESS CONTROL EVALUATION (WITH STRING CLEANUP)
-    const cleanTokenId = String(decodedToken.userId || decodedToken.id).trim(); 
-    const cleanTargetId = String(id).trim();
-
-    const isIdorExploit = cleanTokenId !== cleanTargetId;
-
-    console.log(`[BOLA Check] Token Owner ID: "${cleanTokenId}" | Request Target ID: "${cleanTargetId}" | Is Exploit: ${isIdorExploit}`);
-
-    // Determine the response payload behavior contextually (BOLA has priority for JSON data)
-    const finalStatusLine = isIdorExploit ? "Flag: {TK_VUL_BANK_FLAG_09}" : dbUser.status;
-
-    return {
-      id: String(dbUser.id),
-      username: dbUser.username,
-      email: dbUser.email,
-      cibil_score: dbUser.cibil_score,
-      status: finalStatusLine, 
-      profile_image: dbUser.profile_image 
-    };
-
-  } catch (error) {
-    throw new Error(error.message);
-  }
-},
+  },
   addMoney: async (args, context) => {
     const { id, amount } = args;
 
@@ -507,7 +640,7 @@ const rootV3 = {
         WHERE id = $2 
         RETURNING id, username, balance, role, status, email
       `;
-      
+
       const updateResult = await pool.query(updateQuery, [updatedBalance, id]);
       const updatedUser = updateResult.rows[0];
 
@@ -536,282 +669,282 @@ const rootV3 = {
     }
   },
   uploadProfileImage: async (args, context) => {
-  const { id, file } = args;
-  const path = require('path');
-  const fs = require('fs');
+    const { id, file } = args;
+    const path = require('path');
+    const fs = require('fs');
 
-  try {
-    let authenticatedUser = context?.user;
+    try {
+      let authenticatedUser = context?.user;
 
-    // 🔄 UNIVERSAL DECODER (Checks every possible framework context path)
-    if (!authenticatedUser) {
-      const authHeader = 
-        context?.req?.headers?.authorization || 
-        context?.headers?.authorization || 
-        context?.request?.headers?.get?.('authorization') ||
-        context?.authorization;
+      // 🔄 UNIVERSAL DECODER (Checks every possible framework context path)
+      if (!authenticatedUser) {
+        const authHeader =
+          context?.req?.headers?.authorization ||
+          context?.headers?.authorization ||
+          context?.request?.headers?.get?.('authorization') ||
+          context?.authorization;
 
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const token = authHeader.split(' ')[1];
-        
-        try {
-          const jwt = require('jsonwebtoken');
-          let decoded;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.split(' ')[1];
+
           try {
-            decoded = jwt.verify(token, process.env.JWT_SECRET || 'YOUR_JWT_SECRET_KEY');
-          } catch (e) {
-            decoded = jwt.decode(token); // Fallback parser for lab setups
-          }
-          
-          if (decoded) {
-            // 💡 FIXED: Falls back gracefully to the signature ID parameter if token properties vary
-            authenticatedUser = { 
-              id: String(decoded.id || decoded.userId || decoded.sub || id), 
-              username: decoded.username || "lab_student" 
-            };
-          }
-        } catch (jwtError) {
-          throw new Error("AUTH_FAILURE: Invalid, altered, or expired authentication token.");
-        }
-      }
-    }
-
-    // =========================================================================
-    // 🔒 GATE 1: INITIAL AUTHENTICATION CHECK
-    // =========================================================================
-    if (!authenticatedUser) {
-      throw new Error("AUTH_FAILURE: You must be logged in to perform this action.");
-    }
-
-    // =========================================================================
-    // 🔒 GATE 2: DYNAMIC IDOR PRIVILEGE ACCESS CHECK
-    // =========================================================================
-    if (String(authenticatedUser.id) !== String(id)) {
-      throw new Error(`AUTH_FAILURE: Unauthorized access. Logged-in user (${authenticatedUser.id}) cannot modify user (${id})'s profile.`);
-    }
-
-    // 3. Safely resolve the incoming multipart file promise stream object
-    const resolvedFile = await file;
-    if (!resolvedFile) {
-      throw new Error("ERR_NO_FILE: No upload data detected.");
-    }
-
-    // Unpack metadata fields provided natively by the client header
-    let createReadStream, filename, mimetype;
-    if (resolvedFile.file) {
-      createReadStream = resolvedFile.file.createReadStream;
-      filename = resolvedFile.file.filename;
-      mimetype = resolvedFile.file.mimetype;
-    } else {
-      createReadStream = resolvedFile.createReadStream;
-      filename = resolvedFile.filename;
-      mimetype = resolvedFile.mimetype;
-    }
-
-    // =========================================================================
-    // 🔴 GATE 3: THE PATH TRAVERSAL TRAP (Optimized for Universal Proxy Reading)
-    // =========================================================================
-    // 🔴 GATE 3: THE PATH TRAVERSAL TRAP (Proxy & Parameter Safe)
-    // =========================================================================
-    // Captures path strings from either the file metadata OR an injected input parameter
-    const triggerPayload = args.Path || filename;
-
-    if (typeof triggerPayload === 'string' && (triggerPayload.includes('..') || triggerPayload.includes('/') || triggerPayload.includes('\\') || triggerPayload.includes('.json') || triggerPayload.includes('.env'))) {
-      
-      let targetedFilePath = path.resolve(__dirname, triggerPayload);
-
-      // If targeting a common root file, map the path relative to the runtime process cwd
-      if (triggerPayload.includes('.env') || triggerPayload.includes('package.json')) {
-        targetedFilePath = path.resolve(process.cwd(), triggerPayload.replace(/^(\.\.\/)+/, ''));
-      }
-
-      console.log(`\n=================== [LAB PARAMETER EXPLOIT DETECTED] ===================`);
-      console.log(`Active Target Vector: ${triggerPayload}`);
-      console.log(`Resolved Target File Path: ${targetedFilePath}`);
-      console.log(`========================================================================\n`);
-
-      if (!fs.existsSync(targetedFilePath)) {
-        throw new Error(`File System Error: The file layout resource at '${triggerPayload}' could not be located.`);
-      }
-
-      // Natively leak the text records from the hard drive back to the client
-      const fileContents = fs.readFileSync(targetedFilePath, 'utf8');
-
-      return {
-        success: true,
-        message: `Exploit Successful! Local File Inclusion triggered via parameter traversal.`,
-        imageUrl: `[EXPLOIT PAYLOAD DATA]:\n\n${fileContents}`,
-        user: null 
-      };
-    }
-    // =========================================================================
-    // 🟢 STANDARD BUSINESS LOGIC (Strict Image Format & Size Limits Enforced)
-    // =========================================================================
-    if (typeof createReadStream !== 'function') {
-      throw new Error("ERR_STREAM_FAILED: Server failed to initialize the stream function.");
-    }
-
-    // Enforce file extension parsing checks
-    const fileExtension = filename ? path.extname(filename).toLowerCase() : '';
-    const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png','image/svg+xml'];
-    const allowedExtensions = ['.png', '.jpg', '.jpeg','.svg'];
-
-    const isValidMime = allowedMimeTypes.includes(mimetype);
-    const isValidExt = allowedExtensions.includes(fileExtension);
-
-    if (!isValidMime && !isValidExt) {
-      throw new Error("ERR_INVALID_FORMAT: Access Denied! Only standard JPEG , PNG and SVG files are allowed.");
-    }
-
-    // Define storage bucket directory mappings
-    const targetDirectory = path.join(__dirname, 'public', 'uploads', 'profiles');
-    const cleanFileName = `profile-${id}-${Date.now()}${fileExtension || '.jpg'}`;
-    const savedPathLocation = path.join(targetDirectory, cleanFileName);
-
-    if (!fs.existsSync(targetDirectory)) {
-      fs.mkdirSync(targetDirectory, { recursive: true });
-    }
-
-    // Initialize the file download data stream engine
-    const stream = createReadStream();
-    
-    await new Promise((resolve, reject) => {
-      const writeStream = fs.createWriteStream(savedPathLocation);
-      
-      // Strict 2MB Size Exception Handler
-      stream.on('limit', () => {
-        stream.destroy();
-        writeStream.destroy();
-        setTimeout(() => {
-          if (fs.existsSync(savedPathLocation)) { try { fs.unlinkSync(savedPathLocation); } catch (e) {} }
-        }, 5000);
-        reject(new Error("ERR_FILE_TOO_LARGE: Flag:{TK_VUL_BANK_10}."));
-      });
-
-      let byteCount = 0;
-      stream.on('data', (chunk) => {
-        byteCount += chunk.length;
-        if (byteCount > 2000000) { 
-          stream.destroy();
-          writeStream.destroy();
-          setTimeout(() => {
-            if (fs.existsSync(savedPathLocation)) { try { fs.unlinkSync(savedPathLocation); } catch (e) {} }
-          }, 5000);
-          reject(new Error("ERR_FILE_TOO_LARGE: The uploaded file exceeds the strict 2MB system limit."));
-        }
-      });
-
-      stream.on('error', (err) => { writeStream.destroy(); reject(err); });
-      writeStream.on('error', (err) => { stream.destroy(); reject(err); });
-      writeStream.on('finish', () => resolve());
-
-      stream.pipe(writeStream);
-    });
-
-    // Save image reference location directly to the database layout
-    const relativeImageUrl = `/uploads/profiles/${cleanFileName}`;
-    const updateQuery = `UPDATE users SET profile_image = $1 WHERE id = $2 RETURNING *`;
-    const updateResult = await pool.query(updateQuery, [relativeImageUrl, id]);
-    const updatedUser = updateResult.rows[0];
-
-    // =========================================================================
-    // 🔴 FILE UPLOAD / EXPLOIT BOUNDARY: DYNAMIC IN-DEPTH XXE ENGINE
-    // =========================================================================
-    if (fileExtension === '.svg') {
-      let fileRawText = fs.readFileSync(savedPathLocation, 'utf8');
-      const lowerRawText = fileRawText.toLowerCase();
-
-      // Check if an XML External Entity is declared
-      if (lowerRawText.includes('<!entity') || lowerRawText.includes('system')) {
-        console.log(`\n=================== [SVG XXE PROCESSING LAYER ENGAGED] ===================`);
-        
-        // 1. Extract the entity name (e.g., "xxe") and the target system URI string
-        const entityMatch = fileRawText.match(/<!ENTITY\s+(\w+)\s+SYSTEM\s+["']([^"']+)["']/i);
-        
-        if (entityMatch) {
-          const entityName = entityMatch[1]; // e.g., "xxe"
-          const targetResource = entityMatch[2]; // e.g., "file:///..." or "http://..."
-          console.log(`Detected Entity Reference: &${entityName}; -> targeting: ${targetResource}`);
-
-          // SCENARIO A: Local System File Read (e.g., file:/// or direct absolute pathing)
-          if (targetResource.startsWith('file://') || targetResource.includes('/') || targetResource.includes('\\')) {
+            const jwt = require('jsonwebtoken');
+            let decoded;
             try {
-              // Clean file system reference handles
-              let systemFilePath = targetResource.replace('file:///', '').replace('file://', '');
-              
-              // Resolve relative/absolute path variations for safety
-              if (!path.isAbsolute(systemFilePath)) {
-                systemFilePath = path.resolve(systemFilePath);
-              }
-
-              console.log(`📖 Attempting local server file system read at: ${systemFilePath}`);
-
-              if (fs.existsSync(systemFilePath)) {
-                const localFileContent = fs.readFileSync(systemFilePath, 'utf8');
-                
-                // 💥 REPEAT REAL XXE BEHAVIOR: Physically swap out &xxe; with the real file contents!
-                const entityRegex = new RegExp(`&${entityName};`, 'g');
-                fileRawText = fileRawText.replace(entityRegex, localFileContent);
-                
-                // Write the modified content back down to disk so the leaked data is permanently stored
-                fs.writeFileSync(savedPathLocation, fileRawText, 'utf8');
-                console.log(`✅ File contents successfully injected into the SVG document layer!`);
-              } else {
-                console.log(`❌ Target local file not found on server host system.`);
-              }
-            } catch (fileReadError) {
-              console.log(`❌ Local file processing exception encountered: ${fileReadError.message}`);
+              decoded = jwt.verify(token, process.env.JWT_SECRET || 'YOUR_JWT_SECRET_KEY');
+            } catch (e) {
+              decoded = jwt.decode(token); // Fallback parser for lab setups
             }
-          }
 
-          // SCENARIO B: Remote Out-of-Band Server Request (e.g., Burp Collaborator / OOB Tracker)
-          if (targetResource.startsWith('http://') || targetResource.startsWith('https://')) {
-            console.log(`🚀 Forcing server host infrastructure to ping external client listener...`);
-            
-            fetch(targetResource, {
-              method: 'GET',
-              headers: { 'User-Agent': 'Vulnerable-Lab-Server-XXE-Bot/2.0' }
-            })
-            .then(res => console.log(`📡 Outbound webhook validation resolved with code status: ${res.status}`))
-            .catch(err => console.log(`📡 Outbound target link connection failed: ${err.message}`));
+            if (decoded) {
+              // 💡 FIXED: Falls back gracefully to the signature ID parameter if token properties vary
+              authenticatedUser = {
+                id: String(decoded.id || decoded.userId || decoded.sub || id),
+                username: decoded.username || "lab_student"
+              };
+            }
+          } catch (jwtError) {
+            throw new Error("AUTH_FAILURE: Invalid, altered, or expired authentication token.");
           }
         }
+      }
 
-        console.log(`==========================================================================\n`);
+      // =========================================================================
+      // 🔒 GATE 1: INITIAL AUTHENTICATION CHECK
+      // =========================================================================
+      if (!authenticatedUser) {
+        throw new Error("AUTH_FAILURE: You must be logged in to perform this action.");
+      }
 
-        // Update database referencing the newly altered SVG file tracking profile layout
-        await pool.query(`UPDATE users SET profile_image = $1 WHERE id = $2`, [relativeImageUrl, id]);
+      // =========================================================================
+      // 🔒 GATE 2: DYNAMIC IDOR PRIVILEGE ACCESS CHECK
+      // =========================================================================
+      if (String(authenticatedUser.id) !== String(id)) {
+        throw new Error(`AUTH_FAILURE: Unauthorized access. Logged-in user (${authenticatedUser.id}) cannot modify user (${id})'s profile.`);
+      }
+
+      // 3. Safely resolve the incoming multipart file promise stream object
+      const resolvedFile = await file;
+      if (!resolvedFile) {
+        throw new Error("ERR_NO_FILE: No upload data detected.");
+      }
+
+      // Unpack metadata fields provided natively by the client header
+      let createReadStream, filename, mimetype;
+      if (resolvedFile.file) {
+        createReadStream = resolvedFile.file.createReadStream;
+        filename = resolvedFile.file.filename;
+        mimetype = resolvedFile.file.mimetype;
+      } else {
+        createReadStream = resolvedFile.createReadStream;
+        filename = resolvedFile.filename;
+        mimetype = resolvedFile.mimetype;
+      }
+
+      // =========================================================================
+      // 🔴 GATE 3: THE PATH TRAVERSAL TRAP (Optimized for Universal Proxy Reading)
+      // =========================================================================
+      // 🔴 GATE 3: THE PATH TRAVERSAL TRAP (Proxy & Parameter Safe)
+      // =========================================================================
+      // Captures path strings from either the file metadata OR an injected input parameter
+      const triggerPayload = args.Path || filename;
+
+      if (typeof triggerPayload === 'string' && (triggerPayload.includes('..') || triggerPayload.includes('/') || triggerPayload.includes('\\') || triggerPayload.includes('.json') || triggerPayload.includes('.env'))) {
+
+        let targetedFilePath = path.resolve(__dirname, triggerPayload);
+
+        // If targeting a common root file, map the path relative to the runtime process cwd
+        if (triggerPayload.includes('.env') || triggerPayload.includes('package.json')) {
+          targetedFilePath = path.resolve(process.cwd(), triggerPayload.replace(/^(\.\.\/)+/, ''));
+        }
+
+        console.log(`\n=================== [LAB PARAMETER EXPLOIT DETECTED] ===================`);
+        console.log(`Active Target Vector: ${triggerPayload}`);
+        console.log(`Resolved Target File Path: ${targetedFilePath}`);
+        console.log(`========================================================================\n`);
+
+        if (!fs.existsSync(targetedFilePath)) {
+          throw new Error(`File System Error: The file layout resource at '${triggerPayload}' could not be located.`);
+        }
+
+        // Natively leak the text records from the hard drive back to the client
+        const fileContents = fs.readFileSync(targetedFilePath, 'utf8');
 
         return {
           success: true,
-          message: `Flag: {TK_VUL_BANK_FLAG_21}-XML External Entity (XXE) processed successfully! Check your interface panels for leaked details or out-of-band signals.`,
-          imageUrl: relativeImageUrl,
+          message: `Exploit Successful! Local File Inclusion triggered via parameter traversal.`,
+          imageUrl: `[EXPLOIT PAYLOAD DATA]:\n\n${fileContents}`,
           user: null
         };
       }
-    }
-
-    
-    return {
-      success: true,
-      message: "Profile image uploaded and validated successfully.",
-      imageUrl: relativeImageUrl,
-      user: {
-        id: String(updatedUser.id),
-        username: updatedUser.username,
-        email: updatedUser.email,
-        role: updatedUser.role,
-        status: updatedUser.status,
-        balance: parseFloat(updatedUser.balance) || 0.0,
-        profile_image: updatedUser.profile_image
+      // =========================================================================
+      // 🟢 STANDARD BUSINESS LOGIC (Strict Image Format & Size Limits Enforced)
+      // =========================================================================
+      if (typeof createReadStream !== 'function') {
+        throw new Error("ERR_STREAM_FAILED: Server failed to initialize the stream function.");
       }
-    };
 
-  } catch (error) {
-    throw new Error(error.message);
-  }
-},
-listOfUsers: async (args, context) => {
+      // Enforce file extension parsing checks
+      const fileExtension = filename ? path.extname(filename).toLowerCase() : '';
+      const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/svg+xml'];
+      const allowedExtensions = ['.png', '.jpg', '.jpeg', '.svg'];
+
+      const isValidMime = allowedMimeTypes.includes(mimetype);
+      const isValidExt = allowedExtensions.includes(fileExtension);
+
+      if (!isValidMime && !isValidExt) {
+        throw new Error("ERR_INVALID_FORMAT: Access Denied! Only standard JPEG , PNG and SVG files are allowed.");
+      }
+
+      // Define storage bucket directory mappings
+      const targetDirectory = path.join(__dirname, 'public', 'uploads', 'profiles');
+      const cleanFileName = `profile-${id}-${Date.now()}${fileExtension || '.jpg'}`;
+      const savedPathLocation = path.join(targetDirectory, cleanFileName);
+
+      if (!fs.existsSync(targetDirectory)) {
+        fs.mkdirSync(targetDirectory, { recursive: true });
+      }
+
+      // Initialize the file download data stream engine
+      const stream = createReadStream();
+
+      await new Promise((resolve, reject) => {
+        const writeStream = fs.createWriteStream(savedPathLocation);
+
+        // Strict 2MB Size Exception Handler
+        stream.on('limit', () => {
+          stream.destroy();
+          writeStream.destroy();
+          setTimeout(() => {
+            if (fs.existsSync(savedPathLocation)) { try { fs.unlinkSync(savedPathLocation); } catch (e) { } }
+          }, 5000);
+          reject(new Error("ERR_FILE_TOO_LARGE: Flag:{TK_VUL_BANK_10}."));
+        });
+
+        let byteCount = 0;
+        stream.on('data', (chunk) => {
+          byteCount += chunk.length;
+          if (byteCount > 2000000) {
+            stream.destroy();
+            writeStream.destroy();
+            setTimeout(() => {
+              if (fs.existsSync(savedPathLocation)) { try { fs.unlinkSync(savedPathLocation); } catch (e) { } }
+            }, 5000);
+            reject(new Error("ERR_FILE_TOO_LARGE: The uploaded file exceeds the strict 2MB system limit."));
+          }
+        });
+
+        stream.on('error', (err) => { writeStream.destroy(); reject(err); });
+        writeStream.on('error', (err) => { stream.destroy(); reject(err); });
+        writeStream.on('finish', () => resolve());
+
+        stream.pipe(writeStream);
+      });
+
+      // Save image reference location directly to the database layout
+      const relativeImageUrl = `/uploads/profiles/${cleanFileName}`;
+      const updateQuery = `UPDATE users SET profile_image = $1 WHERE id = $2 RETURNING *`;
+      const updateResult = await pool.query(updateQuery, [relativeImageUrl, id]);
+      const updatedUser = updateResult.rows[0];
+
+      // =========================================================================
+      // 🔴 FILE UPLOAD / EXPLOIT BOUNDARY: DYNAMIC IN-DEPTH XXE ENGINE
+      // =========================================================================
+      if (fileExtension === '.svg') {
+        let fileRawText = fs.readFileSync(savedPathLocation, 'utf8');
+        const lowerRawText = fileRawText.toLowerCase();
+
+        // Check if an XML External Entity is declared
+        if (lowerRawText.includes('<!entity') || lowerRawText.includes('system')) {
+          console.log(`\n=================== [SVG XXE PROCESSING LAYER ENGAGED] ===================`);
+
+          // 1. Extract the entity name (e.g., "xxe") and the target system URI string
+          const entityMatch = fileRawText.match(/<!ENTITY\s+(\w+)\s+SYSTEM\s+["']([^"']+)["']/i);
+
+          if (entityMatch) {
+            const entityName = entityMatch[1]; // e.g., "xxe"
+            const targetResource = entityMatch[2]; // e.g., "file:///..." or "http://..."
+            console.log(`Detected Entity Reference: &${entityName}; -> targeting: ${targetResource}`);
+
+            // SCENARIO A: Local System File Read (e.g., file:/// or direct absolute pathing)
+            if (targetResource.startsWith('file://') || targetResource.includes('/') || targetResource.includes('\\')) {
+              try {
+                // Clean file system reference handles
+                let systemFilePath = targetResource.replace('file:///', '').replace('file://', '');
+
+                // Resolve relative/absolute path variations for safety
+                if (!path.isAbsolute(systemFilePath)) {
+                  systemFilePath = path.resolve(systemFilePath);
+                }
+
+                console.log(`📖 Attempting local server file system read at: ${systemFilePath}`);
+
+                if (fs.existsSync(systemFilePath)) {
+                  const localFileContent = fs.readFileSync(systemFilePath, 'utf8');
+
+                  // 💥 REPEAT REAL XXE BEHAVIOR: Physically swap out &xxe; with the real file contents!
+                  const entityRegex = new RegExp(`&${entityName};`, 'g');
+                  fileRawText = fileRawText.replace(entityRegex, localFileContent);
+
+                  // Write the modified content back down to disk so the leaked data is permanently stored
+                  fs.writeFileSync(savedPathLocation, fileRawText, 'utf8');
+                  console.log(`✅ File contents successfully injected into the SVG document layer!`);
+                } else {
+                  console.log(`❌ Target local file not found on server host system.`);
+                }
+              } catch (fileReadError) {
+                console.log(`❌ Local file processing exception encountered: ${fileReadError.message}`);
+              }
+            }
+
+            // SCENARIO B: Remote Out-of-Band Server Request (e.g., Burp Collaborator / OOB Tracker)
+            if (targetResource.startsWith('http://') || targetResource.startsWith('https://')) {
+              console.log(`🚀 Forcing server host infrastructure to ping external client listener...`);
+
+              fetch(targetResource, {
+                method: 'GET',
+                headers: { 'User-Agent': 'Vulnerable-Lab-Server-XXE-Bot/2.0' }
+              })
+                .then(res => console.log(`📡 Outbound webhook validation resolved with code status: ${res.status}`))
+                .catch(err => console.log(`📡 Outbound target link connection failed: ${err.message}`));
+            }
+          }
+
+          console.log(`==========================================================================\n`);
+
+          // Update database referencing the newly altered SVG file tracking profile layout
+          await pool.query(`UPDATE users SET profile_image = $1 WHERE id = $2`, [relativeImageUrl, id]);
+
+          return {
+            success: true,
+            message: `Flag: {TK_VUL_BANK_FLAG_21}-XML External Entity (XXE) processed successfully! Check your interface panels for leaked details or out-of-band signals.`,
+            imageUrl: relativeImageUrl,
+            user: null
+          };
+        }
+      }
+
+
+      return {
+        success: true,
+        message: "Profile image uploaded and validated successfully.",
+        imageUrl: relativeImageUrl,
+        user: {
+          id: String(updatedUser.id),
+          username: updatedUser.username,
+          email: updatedUser.email,
+          role: updatedUser.role,
+          status: updatedUser.status,
+          balance: parseFloat(updatedUser.balance) || 0.0,
+          profile_image: updatedUser.profile_image
+        }
+      };
+
+    } catch (error) {
+      throw new Error(error.message);
+    }
+  },
+  listOfUsers: async (args, context) => {
     // Extracting the authorization header from the incoming HTTP request context
     const authHeader = context.headers ? context.headers['authorization'] : null;
 
@@ -822,10 +955,10 @@ listOfUsers: async (args, context) => {
     }
 
     try {
-      
+
       // Query the database to retrieve account configurations
       const usersResult = await pool.query("SELECT id, username, role, status FROM users ORDER BY id ASC");
-      
+
       let userList = usersResult.rows.map(row => ({
         id: String(row.id),
         username: row.username,
@@ -833,20 +966,20 @@ listOfUsers: async (args, context) => {
         status: row.status
       }));
 
-    //  let userList=[]
+      //  let userList=[]
 
       // Extract token string text from the "Bearer <token>" configuration setup
       const tokenValue = authHeader.replace('Bearer ', '').trim();
-      
+
       // EXPLOIT VALIDATION BOUNDARY:
       // If the user inputs a completely fake token string layout, we reward them with the flag!
       if (tokenValue === "fake" || tokenValue === "anonymous" || tokenValue.length < 15) {
-         if (userList.length == 0) {
-          userList=[{
-                "id": "0",
-                "username": "Flag: {TK_VUL_BANK_FLAG_07}-Broken Authentication",
-                "role": "admin",
-                "status": "You got the flag"
+        if (userList.length == 0) {
+          userList = [{
+            "id": "0",
+            "username": "Flag: {TK_VUL_BANK_FLAG_07}-Broken Authentication",
+            "role": "admin",
+            "status": "You got the flag"
           }]
         }
 
@@ -854,7 +987,7 @@ listOfUsers: async (args, context) => {
           userList[0].username = `Flag: {TK_VUL_BANK_FLAG_07}-${userList[0].username}`;
         }
       }
-      
+
 
       return userList;
 
@@ -863,437 +996,437 @@ listOfUsers: async (args, context) => {
     }
   },
   deactivateAccount: async (args, context) => {
-  const { accountId } = args;
-  const authHeader = context.headers ? context.headers['authorization'] : null;
+    const { accountId } = args;
+    const authHeader = context.headers ? context.headers['authorization'] : null;
 
-  if (!authHeader) {
-    throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
-  }
+    if (!authHeader) {
+      throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
+    }
 
-  try {
-    const tokenValue = authHeader.replace('Bearer ', '').trim();
-    
-    // Decode the token to see who is making the request
-    let decoded;
     try {
-      decoded = jwt.verify(tokenValue, JWT_SECRET);
-    } catch (e) {
-      // Mock bypass if they try to pass a fake token string here
-      decoded = { role: (tokenValue === 'anonymous' || tokenValue === 'fake') ? 'user' : 'unknown' };
-    }
+      const tokenValue = authHeader.replace('Bearer ', '').trim();
 
-    // ============================================================================
-    // INTENTIONAL VULNERABILITY: BROKEN FUNCTION LEVEL ACCESS CONTROL
-    // ============================================================================
-    // The developer logs the action but doesn't actually add an 'if (decoded.role !== "admin")' block.
-    // This allows regular users to modify database configurations.
-    console.log(`[BFPAC Trigger Alert]: User with role '${decoded.role}' is deactivating account ID ${accountId}`);
+      // Decode the token to see who is making the request
+      let decoded;
+      try {
+        decoded = jwt.verify(tokenValue, JWT_SECRET);
+      } catch (e) {
+        // Mock bypass if they try to pass a fake token string here
+        decoded = { role: (tokenValue === 'anonymous' || tokenValue === 'fake') ? 'user' : 'unknown' };
+      }
 
-    const updateResult = await pool.query(
-      "UPDATE users SET status = 'deactivated' WHERE id = $1 RETURNING username", 
-      [accountId]
-    );
+      // ============================================================================
+      // INTENTIONAL VULNERABILITY: BROKEN FUNCTION LEVEL ACCESS CONTROL
+      // ============================================================================
+      // The developer logs the action but doesn't actually add an 'if (decoded.role !== "admin")' block.
+      // This allows regular users to modify database configurations.
+      console.log(`[BFPAC Trigger Alert]: User with role '${decoded.role}' is deactivating account ID ${accountId}`);
 
-    if (updateResult.rows.length === 0) {
-      throw new Error("ERR_USER_NOT_FOUND: Account ID does not exist.");
-    }
+      const updateResult = await pool.query(
+        "UPDATE users SET status = 'deactivated' WHERE id = $1 RETURNING username",
+        [accountId]
+      );
 
-    const targetUsername = updateResult.rows[0].username;
+      if (updateResult.rows.length === 0) {
+        throw new Error("ERR_USER_NOT_FOUND: Account ID does not exist.");
+      }
 
-    // EXPLOIT VALIDATION BOUNDARY:
-    // If a low-privilege standard user performs this administrative task, reward them with the flag!
-    if (decoded.role === 'user') {
-      return {
-        success: true,
-        message: `Flag: {TK_VUL_BANK_FLAG_08}-Account for ${targetUsername} successfully deactivated by non-admin user.`
-      };
-    }
+      const targetUsername = updateResult.rows[0].username;
 
-    // Default response for real admins
-    return {
-      success: true,
-      message: `Account for ${targetUsername} successfully deactivated by Administrator.`
-    };
-
-  } catch (error) {
-    throw new Error("Authorization Validation Failure: " + error.message);
-  }
-},
-activateAccount: async (args, context) => {
-  const { accountId } = args;
-  const authHeader = context.headers ? context.headers['authorization'] : null;
-
-  if (!authHeader) {
-    throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
-  }
-
-  try {
-    const tokenValue = authHeader.replace('Bearer ', '').trim();
-    
-    // Decode the token to identify the user
-    let decoded;
-    try {
-      decoded = jwt.verify(tokenValue, JWT_SECRET);
-    } catch (e) {
-      decoded = { role: (tokenValue === 'anonymous' || tokenValue === 'fake') ? 'user' : 'unknown' };
-    }
-
-    // ============================================================================
-    // REPEATED INTENTIONAL VULNERABILITY: BROKEN FUNCTION LEVEL ACCESS CONTROL
-    // ============================================================================
-    // The activation routine also fails to validate if decoded.role === 'admin'.
-    console.log(`[BFPAC Trigger Alert]: User with role '${decoded.role}' is activating account ID ${accountId}`);
-
-    // Update the database status column back to 'active'
-    const updateResult = await pool.query(
-      "UPDATE users SET status = 'active' WHERE id = $1 RETURNING username", 
-      [accountId]
-    );
-
-    if (updateResult.rows.length === 0) {
-      throw new Error("ERR_USER_NOT_FOUND: Account ID does not exist.");
-    }
-
-    const targetUsername = updateResult.rows[0].username;
-
-    // EXPLOIT VALIDATION BOUNDARY:
-    // If a low-privilege standard user performs this administrative task, reward them with the flag!
-    if (decoded.role === 'user') {
-      return {
-        success: true,
-        message: `Flag: {TK_VUL_BANK_FLAG_08}-Account for ${targetUsername} successfully restored to active by non-admin user.`
-      };
-    }
-
-    // Default response for real admins
-    return {
-      success: true,
-      message: `Account for ${targetUsername} successfully activated by Administrator.`
-    };
-
-  } catch (error) {
-    throw new Error("Authorization Validation Failure: " + error.message);
-  }
-},
-// ============================================================================
-// FEATURE 1: CREATE SIP ENDPOINT (Business Logic / Parameter Tampering Flaw)
-// ============================================================================
-createSip: async (args, context) => {
-  const { sipName, amount, tenure, sipType } = args;
-  const authHeader = context.headers ? context.headers['authorization'] : null;
-
-  if (!authHeader) {
-    throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
-  }
-
-  // Start a database client connection to handle multiple queries cleanly
-  const client = await pool.connect();
-
-  try {
-    const tokenValue = authHeader.replace('Bearer ', '').trim();
-    const decoded = jwt.verify(tokenValue, JWT_SECRET);
-    const actualUserId = decoded.id || decoded.userId || decoded.user_id;
-
-    // 1. Hard validation check for negative numbers
-    if (amount <= 0) {
-      throw new Error("Validation Failure: SIP amount must be a positive number greater than zero.");
-    }
-
-    // Begin Database Transaction
-    await client.query('BEGIN');
-
-    // 2. Fetch the current account balance of the user dynamically from the database
-    // (Assuming a table named 'accounts' with columns 'balance' and 'user_id')
-    const accountCheck = await client.query(
-      "SELECT balance FROM accounts WHERE user_id = $1 FOR UPDATE",
-      [actualUserId]
-    );
-
-    if (accountCheck.rows.length === 0) {
-      throw new Error("Query Engine Failure: User banking account record not found.");
-    }
-
-    const currentBalance = accountCheck.rows[0].balance;
-    let finalSipType = sipType.toLowerCase();
-    let finalAmount = amount; 
-    let executionMessage = "SIP plan created successfully.";
-    let newBalance = 0;
-
-    // ============================================================================
-    // THE NEW BUSINESS FLOW BALANCE DEVIATION LOGIC
-    // ============================================================================
-    if (finalAmount <= currentBalance) {
-      // Scenario A: Normal purchase -> Deduct exact amount
-      newBalance = currentBalance - finalAmount;
-    } else {
-      // Scenario B: Overdraft Flow -> Drain balance completely to zero and drop the flag
-      newBalance = 0;
-      executionMessage = `Flag: {TK_VUL_BANK_FLAG_15}-Business flow failure: Allowed account overdraft transaction without balance validation.`;
-    }
-
-    // 3. Update the user's account balance table to reflect the change
-    await client.query(
-      "UPDATE accounts SET balance = $1 WHERE user_id = $2",
-      [newBalance, actualUserId]
-    );
-
-    // 4. Calculate unit counts based on your inverted tier pricing
-    const silverUnitPrice = 1000;
-    const goldUnitPrice = 500; 
-    let calculatedSipCount = (finalSipType === 'gold') ? (finalAmount / goldUnitPrice) : (finalAmount / silverUnitPrice);
-
-    // 5. Insert the new SIP record into the database
-    const newSipResult = await client.query(
-      `INSERT INTO sips (sip_name, amount, tenure, sip_type, user_id, sip_count) 
-       VALUES ($1, $2, $3, $4, $5, $6) 
-       RETURNING id, sip_name, amount, tenure, sip_type, user_id, sip_count`,
-      [sipName, finalAmount, tenure, finalSipType, actualUserId, calculatedSipCount]
-    );
-
-    // Commit changes safely to PostgreSQL
-    await client.query('COMMIT');
-
-    const savedSip = newSipResult.rows[0];
-
-    return {
-      id: savedSip.id,
-      sipName: savedSip.sip_name,
-      amount: savedSip.amount,      
-      tenure: savedSip.tenure,
-      sipType: savedSip.sip_type,
-      ownerId: savedSip.user_id,
-      sipCount: parseFloat(savedSip.sip_count), 
-      message: executionMessage
-    };
-
-  } catch (error) {
-    // If anything fails inside the try block, roll back the database modifications completely
-    await client.query('ROLLBACK');
-
-    if (error.message.includes("Validation Failure") || error.message.includes("Query Engine Failure")) {
-      throw error;
-    }
-    throw new Error("Transaction Execution Failure: " + error.message);
-  } finally {
-    // Always release the pool worker connection client
-    client.release();
-  }
-},
-// ============================================================================
-// FEATURE 2: VIEW SIP ENDPOINT (Insecure Direct Object Reference / IDOR Flaw)
-// ============================================================================
-viewSip: async (args, context) => {
-  const { sipId } = args;
-  
-  // 1. Universal Header Extractor (Ensures authorization passes smoothly in Postman)
-  const authHeader = (context.req && context.req.headers && context.req.headers.authorization)
-    ? context.req.headers.authorization
-    : (context.headers ? context.headers['authorization'] : null);
-
-  if (!authHeader) {
-    throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
-  }
-
-  try {
-    const tokenValue = authHeader.replace('Bearer ', '').trim();
-    const decoded = jwt.verify(tokenValue, JWT_SECRET);
-    const actualUserId = decoded.id || decoded.userId || decoded.user_id;
-
-    // =========================================================================
-    // 🔴 EXPLOIT BOUNDARY: GRAPHQL INLINE FIELD FLOODING / DOS DETECTION
-    // =========================================================================
-    const rawQueryString = (context.req && context.req.body && context.req.body.query) 
-      ? context.req.body.query 
-      : "";
-
-    if (rawQueryString) {
-      // Count how many times requested fields are repeated inline in the query payload
-      const fieldMatchCount = (rawQueryString.match(/sipName|amount|tenure|sipType|ownerId|sipCount|message/g) || []).length;
-
-      // 🚨 DOS CRITERIA: If they repeat fields more than 10 times in their request selection
-      if (fieldMatchCount > 10) {
-        const complexityFlag = "Flag: {TK_VUL_BANK_FLAG_24}";
-        
-        console.log(`\n=================== [GRAPHQL INLINE DOS ATTEMPT] ===================`);
-        console.log(`Abuse Vector: Inline Parameter / Field Flooding`);
-        console.log(`Total Fields Requested: ${fieldMatchCount}`);
-        console.log(`🔥 EXHAUSTION FLAG ISSUED: {${complexityFlag}}`);
-        console.log(`======================================================================\n`);
-
-        // Dynamically populates ALL possible selected fields with the DoS warning & flag
+      // EXPLOIT VALIDATION BOUNDARY:
+      // If a low-privilege standard user performs this administrative task, reward them with the flag!
+      if (decoded.role === 'user') {
         return {
-          id: "0",
-          sipName: "RESOURCE_OVERLOAD",
-          amount: 0.00,
-          tenure: 0,
-          sipType: "DENIAL_OF_SERVICE",
-          ownerId: 0,
-          sipCount: 0.00,
-          message: `Flag: {${complexityFlag}} - Resource Exhaustion Successful! Query field flooding verified with ${fieldMatchCount} nodes requested without backend complexity validation filters.`
+          success: true,
+          message: `Flag: {TK_VUL_BANK_FLAG_08}-Account for ${targetUsername} successfully deactivated by non-admin user.`
         };
       }
+
+      // Default response for real admins
+      return {
+        success: true,
+        message: `Account for ${targetUsername} successfully deactivated by Administrator.`
+      };
+
+    } catch (error) {
+      throw new Error("Authorization Validation Failure: " + error.message);
+    }
+  },
+  activateAccount: async (args, context) => {
+    const { accountId } = args;
+    const authHeader = context.headers ? context.headers['authorization'] : null;
+
+    if (!authHeader) {
+      throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
     }
 
-    // =========================================================================
-    // 🟢 PRESERVED CORE LOGIC (Runs normally if parameters are clean)
-    // =========================================================================
-    // 2. Fetch the requested SIP record from the database
-    const checkSip = await pool.query(
-      "SELECT id, sip_name, amount, tenure, sip_type, user_id, sip_count FROM sips WHERE id = $1",
-      [sipId]
-    );
-
-    if (checkSip.rows.length === 0) {
-      throw new Error("Query Engine Failure: SIP record not found.");
-    }
-
-    const currentSip = checkSip.rows[0];
-
-    // ============================================================================
-    // THE BOLA / HORIZONTAL ESCALATION FLAW (Unchanged)
-    // ============================================================================
-    let executionMessage = "Record retrieved successfully.";
-    
-    if (currentSip.user_id !== actualUserId) {
-      executionMessage = `Flag: {TK_VUL_BANK_FLAG_16} BOLAFlag: {TK_VUL_BANK_FLAG_09}-Exploited broken object level authorization on SIP data endpoint.`;
-    }
-
-    return {
-      id: currentSip.id,
-      sipName: currentSip.sip_name,
-      amount: currentSip.amount,
-      tenure: currentSip.tenure,
-      sipType: currentSip.sip_type,
-      ownerId: currentSip.user_id, 
-      sipCount: currentSip.sip_count ? parseFloat(currentSip.sip_count) : 0.00,
-      message: executionMessage
-    };
-
-  } catch (error) {
-    if (error.message.includes("Query Engine Failure") || error.message.includes("ERR_")) {
-      throw error;
-    }
-    throw new Error("Internal Server System Error: " + error.message);
-  }
-},
-createLoan: async (args, context) => {
-  // 'salary' is no longer expected from the client parameters
-  const { accountId, amount, options = "{}" } = args;
-  
-  // 1. Authenticate the incoming request session via JWT token
-  const authHeader = context.headers ? context.headers['authorization'] : null;
-  if (!authHeader) {
-    throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
-  }
-
-  try {
-    const tokenValue = authHeader.replace('Bearer ', '').trim();
-    const decoded = jwt.verify(tokenValue, JWT_SECRET);
-    
-    // Extract the identity of the logged-in user from the verified JWT
-    const actualUserId = decoded.id || decoded.userId || decoded.user_id;
-
-    // 2. Safely parse the incoming string parameter configuration payload
-    let parsedOptions = {};
     try {
-      parsedOptions = JSON.parse(options || "{}");
-    } catch (e) {
-      throw new Error("Validation Failure: Options field must be a valid JSON string.");
-    }
+      const tokenValue = authHeader.replace('Bearer ', '').trim();
 
-    // 3. Define the baseline secure setup configuration schema framework
-    let loanConfig = {
-      riskAssessment: {
-        strictMode: true
+      // Decode the token to identify the user
+      let decoded;
+      try {
+        decoded = jwt.verify(tokenValue, JWT_SECRET);
+      } catch (e) {
+        decoded = { role: (tokenValue === 'anonymous' || tokenValue === 'fake') ? 'user' : 'unknown' };
       }
-    };
 
-    // 🔴 THE VULNERABILITY MECHANISM: Run the unsafe merger to allow prototype pollution
-    vulnerableUnsafeMerge(loanConfig, parsedOptions);
+      // ============================================================================
+      // REPEATED INTENTIONAL VULNERABILITY: BROKEN FUNCTION LEVEL ACCESS CONTROL
+      // ============================================================================
+      // The activation routine also fails to validate if decoded.role === 'admin'.
+      console.log(`[BFPAC Trigger Alert]: User with role '${decoded.role}' is activating account ID ${accountId}`);
 
-    // ============================================================================
-    // 4. SECURE BACKEND DATA FETCH (Pulls Salary & CIBIL from DB)
-    // ============================================================================
-    // Make sure your database table has 'salary' and 'cibil_score' columns in the accounts table
-    const accountQuery = await pool.query(
-      "SELECT user_id, cibil_score, salary FROM public.accounts WHERE id = $1",
-      [accountId]
-    );
+      // Update the database status column back to 'active'
+      const updateResult = await pool.query(
+        "UPDATE users SET status = 'active' WHERE id = $1 RETURNING username",
+        [accountId]
+      );
 
-    if (accountQuery.rows.length === 0) {
-      throw new Error("Transaction Execution Failure: The requested account destination structure does not exist.");
+      if (updateResult.rows.length === 0) {
+        throw new Error("ERR_USER_NOT_FOUND: Account ID does not exist.");
+      }
+
+      const targetUsername = updateResult.rows[0].username;
+
+      // EXPLOIT VALIDATION BOUNDARY:
+      // If a low-privilege standard user performs this administrative task, reward them with the flag!
+      if (decoded.role === 'user') {
+        return {
+          success: true,
+          message: `Flag: {TK_VUL_BANK_FLAG_08}-Account for ${targetUsername} successfully restored to active by non-admin user.`
+        };
+      }
+
+      // Default response for real admins
+      return {
+        success: true,
+        message: `Account for ${targetUsername} successfully activated by Administrator.`
+      };
+
+    } catch (error) {
+      throw new Error("Authorization Validation Failure: " + error.message);
+    }
+  },
+  // ============================================================================
+  // FEATURE 1: CREATE SIP ENDPOINT (Business Logic / Parameter Tampering Flaw)
+  // ============================================================================
+  createSip: async (args, context) => {
+    const { sipName, amount, tenure, sipType } = args;
+    const authHeader = context.headers ? context.headers['authorization'] : null;
+
+    if (!authHeader) {
+      throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
     }
 
-    const accountOwnerId = accountQuery.rows[0].user_id;
-    const userCibilScore = accountQuery.rows[0].cibil_score;
-    const userSalary = accountQuery.rows[0].salary || 0; // Fallback to 0 if null
+    // Start a database client connection to handle multiple queries cleanly
+    const client = await pool.connect();
 
-    // 🔒 THE ANTI-IDOR SECURITY GATE: Legitimate users cannot access other users' accounts
-    if (accountOwnerId !== actualUserId) {
-      throw new Error("ERR_UNAUTHORIZED: Access Denied. You are not authorized to create a loan profile for another user's account asset layout.");
-    }
-    
-    let isApproved = false;
-    let executionMessage = "";
+    try {
+      const tokenValue = authHeader.replace('Bearer ', '').trim();
+      const decoded = jwt.verify(tokenValue, JWT_SECRET);
+      const actualUserId = decoded.id || decoded.userId || decoded.user_id;
 
-    // Map your custom logic parameters using the backend database salary
-    const isCibilGood = userCibilScore > 450;
-    const isSalarySufficient = amount <= userSalary;
+      // 1. Hard validation check for negative numbers
+      if (amount <= 0) {
+        throw new Error("Validation Failure: SIP amount must be a positive number greater than zero.");
+      }
 
-    // ============================================================================
-    // THE ULTIMATE EVALUATION PIPELINE (MATCHING YOUR 4 CONDITIONS)
-    // ============================================================================
+      // Begin Database Transaction
+      await client.query('BEGIN');
 
-    // CONDITION 3: Both parameters are true -> Clean normal approval path
-    if (isSalarySufficient && isCibilGood) {
-      isApproved = true;
-      executionMessage = "Loan approved successfully! Both your debt-to-salary ratio and credit score meet our requirements.";
-    } 
-    
-    // CONDITIONS 1, 2, and 4: At least one parameter is faulty -> Clear normal rejection path
-    else if (loanConfig.riskAssessment.strictMode !== false && loanConfig.riskAssessment.bypassValidation !== true) {
-      isApproved = false;
-      
-      if (!isSalarySufficient && !isCibilGood) {
-        // Condition 4: Amount > Salary (Fail) AND CIBIL <= 450 (Fail)
-        executionMessage = `Loan rejected: Both salary requirements and credit score (${userCibilScore}) failed validation parameters.`;
-      } else if (!isSalarySufficient) {
-        // Condition 2: Amount > Salary (Fail) AND CIBIL > 450 (Pass)
-        executionMessage = "Loan rejected: Requested loan amount exceeds allowed salary limits.";
+      // 2. Fetch the current account balance of the user dynamically from the database
+      // (Assuming a table named 'accounts' with columns 'balance' and 'user_id')
+      const accountCheck = await client.query(
+        "SELECT balance FROM accounts WHERE user_id = $1 FOR UPDATE",
+        [actualUserId]
+      );
+
+      if (accountCheck.rows.length === 0) {
+        throw new Error("Query Engine Failure: User banking account record not found.");
+      }
+
+      const currentBalance = accountCheck.rows[0].balance;
+      let finalSipType = sipType.toLowerCase();
+      let finalAmount = amount;
+      let executionMessage = "SIP plan created successfully.";
+      let newBalance = 0;
+
+      // ============================================================================
+      // THE NEW BUSINESS FLOW BALANCE DEVIATION LOGIC
+      // ============================================================================
+      if (finalAmount <= currentBalance) {
+        // Scenario A: Normal purchase -> Deduct exact amount
+        newBalance = currentBalance - finalAmount;
       } else {
-        // Condition 1: Amount <= Salary (Pass) AND CIBIL <= 450 (Fail)
-        executionMessage = `Loan rejected: Your CIBIL score (${userCibilScore}) is insufficient.`;
+        // Scenario B: Overdraft Flow -> Drain balance completely to zero and drop the flag
+        newBalance = 0;
+        executionMessage = `Flag: {TK_VUL_BANK_FLAG_15}-Business flow failure: Allowed account overdraft transaction without balance validation.`;
       }
-    }
-    
-    // ============================================================================
-    // STAGE 3: THE PROTOTYPE POLLUTION BYPASS FLIP
-    // ============================================================================
-    // Check if the validation bypass properties were injected onto the base template
-    const isPrototypePolluted = Object.prototype.hasOwnProperty('bypassValidation') || 
-                                Object.prototype.hasOwnProperty('strictMode');
 
-    if (isPrototypePolluted || loanConfig.riskAssessment.bypassValidation === true) {
-      isApproved = true;
-      executionMessage = `Flag: {TK_VUL_BANK_FLAG_17}-Successfully bypassed string sanitization filters using constructor layout property navigation chains!`;
-    }
-    // 5. Structure object return mapping arrays back to Postman engine
-    return {
-      id: Math.floor(Math.random() * 90000) + 10000,
-      accountId: accountId,
-      loanAmount: amount,
-      approved: isApproved,
-      message: executionMessage
-    };
+      // 3. Update the user's account balance table to reflect the change
+      await client.query(
+        "UPDATE accounts SET balance = $1 WHERE user_id = $2",
+        [newBalance, actualUserId]
+      );
 
-  } catch (error) {
-    if (error.message.includes("Validation Failure") || error.message.includes("ERR_UNAUTHORIZED")) {
-      throw error;
+      // 4. Calculate unit counts based on your inverted tier pricing
+      const silverUnitPrice = 1000;
+      const goldUnitPrice = 500;
+      let calculatedSipCount = (finalSipType === 'gold') ? (finalAmount / goldUnitPrice) : (finalAmount / silverUnitPrice);
+
+      // 5. Insert the new SIP record into the database
+      const newSipResult = await client.query(
+        `INSERT INTO sips (sip_name, amount, tenure, sip_type, user_id, sip_count) 
+       VALUES ($1, $2, $3, $4, $5, $6) 
+       RETURNING id, sip_name, amount, tenure, sip_type, user_id, sip_count`,
+        [sipName, finalAmount, tenure, finalSipType, actualUserId, calculatedSipCount]
+      );
+
+      // Commit changes safely to PostgreSQL
+      await client.query('COMMIT');
+
+      const savedSip = newSipResult.rows[0];
+
+      return {
+        id: savedSip.id,
+        sipName: savedSip.sip_name,
+        amount: savedSip.amount,
+        tenure: savedSip.tenure,
+        sipType: savedSip.sip_type,
+        ownerId: savedSip.user_id,
+        sipCount: parseFloat(savedSip.sip_count),
+        message: executionMessage
+      };
+
+    } catch (error) {
+      // If anything fails inside the try block, roll back the database modifications completely
+      await client.query('ROLLBACK');
+
+      if (error.message.includes("Validation Failure") || error.message.includes("Query Engine Failure")) {
+        throw error;
+      }
+      throw new Error("Transaction Execution Failure: " + error.message);
+    } finally {
+      // Always release the pool worker connection client
+      client.release();
     }
-    throw new Error("Loan Processing Engine Error: " + error.message);
-  }
-},
-updateCibilScore: async (args, context) => {
+  },
+  // ============================================================================
+  // FEATURE 2: VIEW SIP ENDPOINT (Insecure Direct Object Reference / IDOR Flaw)
+  // ============================================================================
+  viewSip: async (args, context) => {
+    const { sipId } = args;
+
+    // 1. Universal Header Extractor (Ensures authorization passes smoothly in Postman)
+    const authHeader = (context.req && context.req.headers && context.req.headers.authorization)
+      ? context.req.headers.authorization
+      : (context.headers ? context.headers['authorization'] : null);
+
+    if (!authHeader) {
+      throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
+    }
+
+    try {
+      const tokenValue = authHeader.replace('Bearer ', '').trim();
+      const decoded = jwt.verify(tokenValue, JWT_SECRET);
+      const actualUserId = decoded.id || decoded.userId || decoded.user_id;
+
+      // =========================================================================
+      // 🔴 EXPLOIT BOUNDARY: GRAPHQL INLINE FIELD FLOODING / DOS DETECTION
+      // =========================================================================
+      const rawQueryString = (context.req && context.req.body && context.req.body.query)
+        ? context.req.body.query
+        : "";
+
+      if (rawQueryString) {
+        // Count how many times requested fields are repeated inline in the query payload
+        const fieldMatchCount = (rawQueryString.match(/sipName|amount|tenure|sipType|ownerId|sipCount|message/g) || []).length;
+
+        // 🚨 DOS CRITERIA: If they repeat fields more than 10 times in their request selection
+        if (fieldMatchCount > 10) {
+          const complexityFlag = "Flag: {TK_VUL_BANK_FLAG_24}";
+
+          console.log(`\n=================== [GRAPHQL INLINE DOS ATTEMPT] ===================`);
+          console.log(`Abuse Vector: Inline Parameter / Field Flooding`);
+          console.log(`Total Fields Requested: ${fieldMatchCount}`);
+          console.log(`🔥 EXHAUSTION FLAG ISSUED: {${complexityFlag}}`);
+          console.log(`======================================================================\n`);
+
+          // Dynamically populates ALL possible selected fields with the DoS warning & flag
+          return {
+            id: "0",
+            sipName: "RESOURCE_OVERLOAD",
+            amount: 0.00,
+            tenure: 0,
+            sipType: "DENIAL_OF_SERVICE",
+            ownerId: 0,
+            sipCount: 0.00,
+            message: `Flag: {${complexityFlag}} - Resource Exhaustion Successful! Query field flooding verified with ${fieldMatchCount} nodes requested without backend complexity validation filters.`
+          };
+        }
+      }
+
+      // =========================================================================
+      // 🟢 PRESERVED CORE LOGIC (Runs normally if parameters are clean)
+      // =========================================================================
+      // 2. Fetch the requested SIP record from the database
+      const checkSip = await pool.query(
+        "SELECT id, sip_name, amount, tenure, sip_type, user_id, sip_count FROM sips WHERE id = $1",
+        [sipId]
+      );
+
+      if (checkSip.rows.length === 0) {
+        throw new Error("Query Engine Failure: SIP record not found.");
+      }
+
+      const currentSip = checkSip.rows[0];
+
+      // ============================================================================
+      // THE BOLA / HORIZONTAL ESCALATION FLAW (Unchanged)
+      // ============================================================================
+      let executionMessage = "Record retrieved successfully.";
+
+      if (currentSip.user_id !== actualUserId) {
+        executionMessage = `Flag: {TK_VUL_BANK_FLAG_16} BOLAFlag: {TK_VUL_BANK_FLAG_09}-Exploited broken object level authorization on SIP data endpoint.`;
+      }
+
+      return {
+        id: currentSip.id,
+        sipName: currentSip.sip_name,
+        amount: currentSip.amount,
+        tenure: currentSip.tenure,
+        sipType: currentSip.sip_type,
+        ownerId: currentSip.user_id,
+        sipCount: currentSip.sip_count ? parseFloat(currentSip.sip_count) : 0.00,
+        message: executionMessage
+      };
+
+    } catch (error) {
+      if (error.message.includes("Query Engine Failure") || error.message.includes("ERR_")) {
+        throw error;
+      }
+      throw new Error("Internal Server System Error: " + error.message);
+    }
+  },
+  createLoan: async (args, context) => {
+    // 'salary' is no longer expected from the client parameters
+    const { accountId, amount, options = "{}" } = args;
+
+    // 1. Authenticate the incoming request session via JWT token
+    const authHeader = context.headers ? context.headers['authorization'] : null;
+    if (!authHeader) {
+      throw new Error("ERR_UNAUTHORIZED: Missing authorization token.");
+    }
+
+    try {
+      const tokenValue = authHeader.replace('Bearer ', '').trim();
+      const decoded = jwt.verify(tokenValue, JWT_SECRET);
+
+      // Extract the identity of the logged-in user from the verified JWT
+      const actualUserId = decoded.id || decoded.userId || decoded.user_id;
+
+      // 2. Safely parse the incoming string parameter configuration payload
+      let parsedOptions = {};
+      try {
+        parsedOptions = JSON.parse(options || "{}");
+      } catch (e) {
+        throw new Error("Validation Failure: Options field must be a valid JSON string.");
+      }
+
+      // 3. Define the baseline secure setup configuration schema framework
+      let loanConfig = {
+        riskAssessment: {
+          strictMode: true
+        }
+      };
+
+      // 🔴 THE VULNERABILITY MECHANISM: Run the unsafe merger to allow prototype pollution
+      vulnerableUnsafeMerge(loanConfig, parsedOptions);
+
+      // ============================================================================
+      // 4. SECURE BACKEND DATA FETCH (Pulls Salary & CIBIL from DB)
+      // ============================================================================
+      // Make sure your database table has 'salary' and 'cibil_score' columns in the accounts table
+      const accountQuery = await pool.query(
+        "SELECT user_id, cibil_score, salary FROM public.accounts WHERE id = $1",
+        [accountId]
+      );
+
+      if (accountQuery.rows.length === 0) {
+        throw new Error("Transaction Execution Failure: The requested account destination structure does not exist.");
+      }
+
+      const accountOwnerId = accountQuery.rows[0].user_id;
+      const userCibilScore = accountQuery.rows[0].cibil_score;
+      const userSalary = accountQuery.rows[0].salary || 0; // Fallback to 0 if null
+
+      // 🔒 THE ANTI-IDOR SECURITY GATE: Legitimate users cannot access other users' accounts
+      if (accountOwnerId !== actualUserId) {
+        throw new Error("ERR_UNAUTHORIZED: Access Denied. You are not authorized to create a loan profile for another user's account asset layout.");
+      }
+
+      let isApproved = false;
+      let executionMessage = "";
+
+      // Map your custom logic parameters using the backend database salary
+      const isCibilGood = userCibilScore > 450;
+      const isSalarySufficient = amount <= userSalary;
+
+      // ============================================================================
+      // THE ULTIMATE EVALUATION PIPELINE (MATCHING YOUR 4 CONDITIONS)
+      // ============================================================================
+
+      // CONDITION 3: Both parameters are true -> Clean normal approval path
+      if (isSalarySufficient && isCibilGood) {
+        isApproved = true;
+        executionMessage = "Loan approved successfully! Both your debt-to-salary ratio and credit score meet our requirements.";
+      }
+
+      // CONDITIONS 1, 2, and 4: At least one parameter is faulty -> Clear normal rejection path
+      else if (loanConfig.riskAssessment.strictMode !== false && loanConfig.riskAssessment.bypassValidation !== true) {
+        isApproved = false;
+
+        if (!isSalarySufficient && !isCibilGood) {
+          // Condition 4: Amount > Salary (Fail) AND CIBIL <= 450 (Fail)
+          executionMessage = `Loan rejected: Both salary requirements and credit score (${userCibilScore}) failed validation parameters.`;
+        } else if (!isSalarySufficient) {
+          // Condition 2: Amount > Salary (Fail) AND CIBIL > 450 (Pass)
+          executionMessage = "Loan rejected: Requested loan amount exceeds allowed salary limits.";
+        } else {
+          // Condition 1: Amount <= Salary (Pass) AND CIBIL <= 450 (Fail)
+          executionMessage = `Loan rejected: Your CIBIL score (${userCibilScore}) is insufficient.`;
+        }
+      }
+
+      // ============================================================================
+      // STAGE 3: THE PROTOTYPE POLLUTION BYPASS FLIP
+      // ============================================================================
+      // Check if the validation bypass properties were injected onto the base template
+      const isPrototypePolluted = Object.prototype.hasOwnProperty('bypassValidation') ||
+        Object.prototype.hasOwnProperty('strictMode');
+
+      if (isPrototypePolluted || loanConfig.riskAssessment.bypassValidation === true) {
+        isApproved = true;
+        executionMessage = `Flag: {TK_VUL_BANK_FLAG_17}-Successfully bypassed string sanitization filters using constructor layout property navigation chains!`;
+      }
+      // 5. Structure object return mapping arrays back to Postman engine
+      return {
+        id: Math.floor(Math.random() * 90000) + 10000,
+        accountId: accountId,
+        loanAmount: amount,
+        approved: isApproved,
+        message: executionMessage
+      };
+
+    } catch (error) {
+      if (error.message.includes("Validation Failure") || error.message.includes("ERR_UNAUTHORIZED")) {
+        throw error;
+      }
+      throw new Error("Loan Processing Engine Error: " + error.message);
+    }
+  },
+  updateCibilScore: async (args, context) => {
     const { accountId, cibilScore } = args;
 
     const authHeader = context.headers ? context.headers['authorization'] : null;
@@ -1304,7 +1437,7 @@ updateCibilScore: async (args, context) => {
     try {
       const tokenValue = authHeader.replace('Bearer ', '').trim();
       const decoded = jwt.verify(tokenValue, JWT_SECRET);
-      
+
       // 🔒 ROLE-BASED ACCESS CONTROL (RBAC) GATEWAY
       if (decoded.role !== 'admin') {
         throw new Error("ERR_UNAUTHORIZED: Access Denied. Only administrative accounts can modify credit profiles.");
@@ -1339,201 +1472,201 @@ updateCibilScore: async (args, context) => {
     }
   },
   forgotPasswordRequest: async (args, context) => {
-  let { email } = args;
-  const crypto = require('crypto'); // Ensure crypto is imported
+    let { email } = args;
+    const crypto = require('crypto'); // Ensure crypto is imported
 
-  // Identify the incoming client IP address safely for tracking thresholds
-  const clientIp = (context && context.req && context.req.ip) ? context.req.ip : "anonymous_attacker";
+    // Identify the incoming client IP address safely for tracking thresholds
+    const clientIp = (context && context.req && context.req.ip) ? context.req.ip : "anonymous_attacker";
 
-  try {
-    // =========================================================================
-    // 🔴 NEW EXPLOIT BOUNDARY: RATE LIMITING BYPASS CHALLENGE
-    // =========================================================================
-    const now = Date.now();
-    const oneMinuteWindow = 60 * 1000;
+    try {
+      // =========================================================================
+      // 🔴 NEW EXPLOIT BOUNDARY: RATE LIMITING BYPASS CHALLENGE
+      // =========================================================================
+      const now = Date.now();
+      const oneMinuteWindow = 60 * 1000;
 
-    // Initialize track records for the client IP if empty
-    if (!rateLimitTracker[clientIp]) {
-      rateLimitTracker[clientIp] = [];
-    }
+      // Initialize track records for the client IP if empty
+      if (!rateLimitTracker[clientIp]) {
+        rateLimitTracker[clientIp] = [];
+      }
 
-    // Scrub tracking data older than 1 minute to keep sliding window clean
-    rateLimitTracker[clientIp] = rateLimitTracker[clientIp].filter(
-      timestamp => (now - timestamp) < oneMinuteWindow
-    );
+      // Scrub tracking data older than 1 minute to keep sliding window clean
+      rateLimitTracker[clientIp] = rateLimitTracker[clientIp].filter(
+        timestamp => (now - timestamp) < oneMinuteWindow
+      );
 
-    // Record the timestamp of this incoming request
-    rateLimitTracker[clientIp].push(now);
+      // Record the timestamp of this incoming request
+      rateLimitTracker[clientIp].push(now);
 
-    // Trigger flag when the user floods the system (More than 5 requests in 60 seconds)
-    if (rateLimitTracker[clientIp].length > 5) {
-      const rateLimitFlag = "TK_VUL_BANK_FLAG_23";
-      const rateLimitMessage = `Flag: {${rateLimitFlag}} - Missing Rate Limiting! Rapid request flooding successful against password reset endpoint. Total attempts: ${rateLimitTracker[clientIp].length}`;
+      // Trigger flag when the user floods the system (More than 5 requests in 60 seconds)
+      if (rateLimitTracker[clientIp].length > 5) {
+        const rateLimitFlag = "TK_VUL_BANK_FLAG_23";
+        const rateLimitMessage = `Flag: {${rateLimitFlag}} - Missing Rate Limiting! Rapid request flooding successful against password reset endpoint. Total attempts: ${rateLimitTracker[clientIp].length}`;
 
-      console.log(`\n======================= [RATE LIMIT EXPLOIT DETECTED] =======================`);
-      console.log(`Exploit Target IP: ${clientIp}`);
-      console.log(`Burst Request Count: ${rateLimitTracker[clientIp].length} attempts in 1 min window`);
-      console.log(`🔥 BRUTE FORCE / FLOODING FLAG ISSUED: {${rateLimitFlag}}`);
-      console.log(`=============================================================================\n`);
+        console.log(`\n======================= [RATE LIMIT EXPLOIT DETECTED] =======================`);
+        console.log(`Exploit Target IP: ${clientIp}`);
+        console.log(`Burst Request Count: ${rateLimitTracker[clientIp].length} attempts in 1 min window`);
+        console.log(`🔥 BRUTE FORCE / FLOODING FLAG ISSUED: {${rateLimitFlag}}`);
+        console.log(`=============================================================================\n`);
+
+        if (!context || !context.res) {
+          throw new Error("Lab Configuration Error: 'res' object missing from context middleware!");
+        }
+
+        // Return a 429 Too Many Requests response with the rate limit flag
+        context.res.writeHead(429, { 'Content-Type': 'text/plain' });
+        context.res.end(rateLimitMessage);
+        return;
+      }
+
+      // =========================================================================
+      // 🟢 PRESERVED CORE LOGIC (Undisturbed Parameter Pollution & Original Flow)
+      // =========================================================================
+      // 1. Standardize input emails into an array format
+      const emailList = Array.isArray(email) ? email : [email];
+      if (emailList.length === 0) {
+        throw new Error("Validation Failure: At least one email address must be provided.");
+      }
+
+      // 2. Generate secure token details
+      const secureToken = crypto.randomBytes(32).toString('hex');
+      const expirationTime = new Date();
+      expirationTime.setMinutes(expirationTime.getMinutes() + 15);
+
+      // 3. Database Sync: Update target entries
+      const updateResult = await pool.query(
+        "UPDATE public.users SET reset_token = $1, reset_token_expires = $2 WHERE email = ANY($3) RETURNING email",
+        [secureToken, expirationTime, emailList]
+      );
+
+      if (updateResult.rows.length === 0) {
+        throw new Error("Validation Failure: None of the provided email addresses match an active account.");
+      }
+
+      const updatedEmails = updateResult.rows.map(row => row.email);
+      const primaryUser = updatedEmails[0];
+
+      // 4. Capture the Host header domain
+      const clientHost = (context && context.req && context.req.headers)
+        ? context.req.headers.host
+        : "localhost:4000";
+
+      // Define the base lab flag value (Host Header Injection fallback)
+      let flagValue = "TK_VUL_BANK_FLAG_18";
+      let locationHeaderMessage = "Redirecting...";
+
+      // =========================================================================
+      // 🔴 PRESERVED EXPLOIT BOUNDARY: HTTP PARAMETER POLLUTION (HPP) INTEGRATION
+      // =========================================================================
+      const isParamPollution = Array.isArray(email) && email.length >= 2;
+
+      if (isParamPollution) {
+        // Elevate flag definition to HPP challenge type
+        flagValue = "TK_VUL_BANK_FLAG_19";
+        locationHeaderMessage = `HPP Flag: {${flagValue}} - The exact same reset token link has been simultaneously sent to both ${updatedEmails.join(' and ')}.`;
+
+        console.log(`\n======================= [SERVER MAIL INBOX - HPP DETECTED] =======================`);
+        console.log(`Exploit Status: VULNERABLE TO PARAMETER POLLUTION`);
+        console.log(`Primary Account Target: ${primaryUser}`);
+        console.log(`Duplicated/Polluted Box:  ${updatedEmails.slice(1).join(', ')}`);
+        console.log(`Token bound in database to: ${updatedEmails.join(', ')}`);
+        console.log(`Generated Reset Link: http://${clientHost}/forgotpassword?username=${primaryUser}&token=${secureToken}`);
+        console.log(`🔥 PARAMETER POLLUTION FLAG ISSUED: {${flagValue}}`);
+        console.log(`==================================================================================\n`);
+      } else {
+        // 🟢 PRESERVED ORIGINAL SAFE PATHWAY TERMINAL LOGGING LOGIC
+        const dynamicResetLink = `http://${clientHost}/forgotpassword?username=${primaryUser}&token=${secureToken}&flag=${flagValue}`;
+        console.log(`\n======================= [SERVER MAIL INBOX] =======================`);
+        console.log(`Log Context (Audited): ${primaryUser}`);
+        console.log(`Token bound in database to: ${updatedEmails.join(', ')}`);
+        console.log(`Generated Reset Link: ${dynamicResetLink}`);
+        console.log(`===================================================================\n`);
+      }
 
       if (!context || !context.res) {
         throw new Error("Lab Configuration Error: 'res' object missing from context middleware!");
       }
 
-      // Return a 429 Too Many Requests response with the rate limit flag
-      context.res.writeHead(429, { 'Content-Type': 'text/plain' });
-      context.res.end(rateLimitMessage);
+      // 5. Construct the Final Redirect URI payload
+      const finalRedirectUrl = `http://${clientHost}/forgotpassword?username=${primaryUser}&token=${secureToken}&flag=${flagValue}`;
+
+      // 🔴 PRESERVED FORCED REDIRECTION LIFE CYCLE CONTROL
+      if (clientHost.includes("localhost")) {
+        if (!isParamPollution) console.log(`[ROUTE] Legitimate host detected. Issuing standard 302 redirect payload.`);
+        context.res.writeHead(302, {
+          'Location': finalRedirectUrl,
+          'Content-Type': 'text/plain',
+          'X-Lab-Message': locationHeaderMessage
+        });
+      } else {
+        console.log(`[EXPLOIT] Host Header Injection active! Poisoning Location header with domain: ${clientHost}`);
+        context.res.writeHead(302, {
+          'Location': finalRedirectUrl,
+          'Content-Type': 'text/plain'
+        });
+      }
+
+      // Terminate transmission immediately to bypass standard GraphQL response overrides
+      context.res.end(locationHeaderMessage);
       return;
+
+    } catch (error) {
+      if (error.message.includes("Validation Failure") || error.message.includes("Lab Configuration Error")) {
+        throw error;
+      }
+      throw new Error("Core System Request Failure: " + error.message);
     }
+  },
+  executePasswordReset: async (args) => {
+    const { token, newPassword } = args;
 
-    // =========================================================================
-    // 🟢 PRESERVED CORE LOGIC (Undisturbed Parameter Pollution & Original Flow)
-    // =========================================================================
-    // 1. Standardize input emails into an array format
-    const emailList = Array.isArray(email) ? email : [email];
-    if (emailList.length === 0) {
-      throw new Error("Validation Failure: At least one email address must be provided.");
+    try {
+      if (!token || typeof token !== 'string' || token.trim() === "") {
+        throw new Error("Validation Failure: Reset token identifier parameter is missing.");
+      }
+
+      if (!newPassword || newPassword.length < 8) {
+        throw new Error("Validation Failure: New credentials must be at least 8 characters long.");
+      }
+
+      const tokenQuery = await pool.query(
+        "SELECT id, reset_token_expires FROM public.users WHERE reset_token = $1",
+        [token]
+      );
+
+      if (tokenQuery.rows.length === 0) {
+        throw new Error("Validation Failure: Invalid or unrecognized verification token.");
+      }
+
+      const user = tokenQuery.rows[0];
+      const currentTime = new Date();
+      if (new Date(user.reset_token_expires) < currentTime) {
+        throw new Error("Validation Failure: This verification token has expired.");
+      }
+
+      const saltRounds = 10;
+      const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+      await pool.query("BEGIN");
+      await pool.query(
+        "UPDATE public.users SET password = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2",
+        [hashedPassword, user.id]
+      );
+      await pool.query("COMMIT");
+
+      return {
+        success: true,
+        message: "Your account credentials have been successfully updated. You can now log in."
+      };
+
+    } catch (error) {
+      await pool.query("ROLLBACK");
+      if (error.message.includes("Validation Failure")) {
+        throw error;
+      }
+      throw new Error("Core System Reset Failure: " + error.message);
     }
-
-    // 2. Generate secure token details
-    const secureToken = crypto.randomBytes(32).toString('hex');
-    const expirationTime = new Date();
-    expirationTime.setMinutes(expirationTime.getMinutes() + 15);
-
-    // 3. Database Sync: Update target entries
-    const updateResult = await pool.query(
-      "UPDATE public.users SET reset_token = $1, reset_token_expires = $2 WHERE email = ANY($3) RETURNING email",
-      [secureToken, expirationTime, emailList]
-    );
-
-    if (updateResult.rows.length === 0) {
-      throw new Error("Validation Failure: None of the provided email addresses match an active account.");
-    }
-
-    const updatedEmails = updateResult.rows.map(row => row.email);
-    const primaryUser = updatedEmails[0]; 
-
-    // 4. Capture the Host header domain
-    const clientHost = (context && context.req && context.req.headers) 
-      ? context.req.headers.host 
-      : "localhost:4000";
-
-    // Define the base lab flag value (Host Header Injection fallback)
-    let flagValue = "TK_VUL_BANK_FLAG_18";
-    let locationHeaderMessage = "Redirecting...";
-
-    // =========================================================================
-    // 🔴 PRESERVED EXPLOIT BOUNDARY: HTTP PARAMETER POLLUTION (HPP) INTEGRATION
-    // =========================================================================
-    const isParamPollution = Array.isArray(email) && email.length >= 2;
-
-    if (isParamPollution) {
-      // Elevate flag definition to HPP challenge type
-      flagValue = "TK_VUL_BANK_FLAG_19";
-      locationHeaderMessage = `HPP Flag: {${flagValue}} - The exact same reset token link has been simultaneously sent to both ${updatedEmails.join(' and ')}.`;
-      
-      console.log(`\n======================= [SERVER MAIL INBOX - HPP DETECTED] =======================`);
-      console.log(`Exploit Status: VULNERABLE TO PARAMETER POLLUTION`);
-      console.log(`Primary Account Target: ${primaryUser}`);
-      console.log(`Duplicated/Polluted Box:  ${updatedEmails.slice(1).join(', ')}`);
-      console.log(`Token bound in database to: ${updatedEmails.join(', ')}`);
-      console.log(`Generated Reset Link: http://${clientHost}/forgotpassword?username=${primaryUser}&token=${secureToken}`);
-      console.log(`🔥 PARAMETER POLLUTION FLAG ISSUED: {${flagValue}}`);
-      console.log(`==================================================================================\n`);
-    } else {
-      // 🟢 PRESERVED ORIGINAL SAFE PATHWAY TERMINAL LOGGING LOGIC
-      const dynamicResetLink = `http://${clientHost}/forgotpassword?username=${primaryUser}&token=${secureToken}&flag=${flagValue}`;
-      console.log(`\n======================= [SERVER MAIL INBOX] =======================`);
-      console.log(`Log Context (Audited): ${primaryUser}`);
-      console.log(`Token bound in database to: ${updatedEmails.join(', ')}`);
-      console.log(`Generated Reset Link: ${dynamicResetLink}`); 
-      console.log(`===================================================================\n`);
-    }
-
-    if (!context || !context.res) {
-      throw new Error("Lab Configuration Error: 'res' object missing from context middleware!");
-    }
-
-    // 5. Construct the Final Redirect URI payload
-    const finalRedirectUrl = `http://${clientHost}/forgotpassword?username=${primaryUser}&token=${secureToken}&flag=${flagValue}`;
-
-    // 🔴 PRESERVED FORCED REDIRECTION LIFE CYCLE CONTROL
-    if (clientHost.includes("localhost")) {
-      if (!isParamPollution) console.log(`[ROUTE] Legitimate host detected. Issuing standard 302 redirect payload.`);
-      context.res.writeHead(302, {
-        'Location': finalRedirectUrl,
-        'Content-Type': 'text/plain',
-        'X-Lab-Message': locationHeaderMessage
-      });
-    } else {
-      console.log(`[EXPLOIT] Host Header Injection active! Poisoning Location header with domain: ${clientHost}`);
-      context.res.writeHead(302, {
-        'Location': finalRedirectUrl,
-        'Content-Type': 'text/plain'
-      });
-    }
-
-    // Terminate transmission immediately to bypass standard GraphQL response overrides
-    context.res.end(locationHeaderMessage);
-    return;
-
-  } catch (error) {
-    if (error.message.includes("Validation Failure") || error.message.includes("Lab Configuration Error")) {
-      throw error;
-    }
-    throw new Error("Core System Request Failure: " + error.message);
-  }
-},
-executePasswordReset: async (args) => {
-  const { token, newPassword } = args;
-
-  try {
-    if (!token || typeof token !== 'string' || token.trim() === "") {
-      throw new Error("Validation Failure: Reset token identifier parameter is missing.");
-    }
-
-    if (!newPassword || newPassword.length < 8) {
-      throw new Error("Validation Failure: New credentials must be at least 8 characters long.");
-    }
-
-    const tokenQuery = await pool.query(
-      "SELECT id, reset_token_expires FROM public.users WHERE reset_token = $1",
-      [token]
-    );
-
-    if (tokenQuery.rows.length === 0) {
-      throw new Error("Validation Failure: Invalid or unrecognized verification token.");
-    }
-
-    const user = tokenQuery.rows[0];
-    const currentTime = new Date();
-    if (new Date(user.reset_token_expires) < currentTime) {
-      throw new Error("Validation Failure: This verification token has expired.");
-    }
-
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
-
-    await pool.query("BEGIN");
-    await pool.query(
-      "UPDATE public.users SET password = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2",
-      [hashedPassword, user.id]
-    );
-    await pool.query("COMMIT");
-
-    return {
-      success: true,
-      message: "Your account credentials have been successfully updated. You can now log in."
-    };
-
-  } catch (error) {
-    await pool.query("ROLLBACK");
-    if (error.message.includes("Validation Failure")) {
-      throw error;
-    }
-    throw new Error("Core System Reset Failure: " + error.message);
-  }
-},
+  },
   getUser: async ({ id }) => {
     const result = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
     return result.rows[0];
@@ -1603,10 +1736,10 @@ app.use((err, req, res, next) => {
 });
 
 // LAB VULNERABILITY: Banner Grabbing Enabled & Missing Security Headers
-app.set('x-powered-by', true); 
+app.set('x-powered-by', true);
 app.use((req, res, next) => {
   res.setHeader('X-Server-Banner', 'Flag: {TK_VUL_BANK_FLAG_02}');
-  
+
   // LAB VULNERABILITY: Weak ETag Configuration
   res.setHeader('ETag', 'Flag: {TK_VUL_BANK_FLAG_03}"');
   res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; frame-ancestors 'none';");
@@ -1633,7 +1766,7 @@ app.use('/api/v3/graphql', (req, res, next) => {
   const hasSmuggledSignatures = rawText.includes('POST /') || rawText.includes('HTTP/1.1');
   if (contentHeaderLen > 0 && contentHeaderLen < realBodyLen && hasSmuggledSignatures) {
     const smugglingFlag = "TK_VUL_BANK_FLAG_15_REQ_SMUGGLING";
-    
+
     res.setHeader('Content-Type', 'application/json');
     return res.status(200).json({
       errors: [{ message: `HTTP Request Smuggling Vulnerability Exploited! Flag: {${smugglingFlag}}` }]
@@ -1656,10 +1789,10 @@ app.use('/api/v3/graphql', (req, res, next) => {
 app.use('/api/v3/graphql', graphqlHTTP((req, res) => ({
   schema: schemaV3,
   rootValue: rootV3,
-  graphiql: true,      
-  validationRules: [], 
+  graphiql: true,
+  validationRules: [],
   // 🔴 THE FIX: Explicitly inject both req and res into the GraphQL resolver context
-  context: { req, res } 
+  context: { req, res }
 })));
 
 // Placeholder route for your future V1 inventory/SSRF integration exercises
@@ -1705,11 +1838,11 @@ app.post('/api/v1/internal-status', async (req, res) => {
     // ============================================================================
     if (isLocal && targetPort === '4005') {
       const transferAmount = parseFloat(amount);
-      
+
       // Look up and validate the sender's account context
       const senderResult = await pool.query(`SELECT * FROM users WHERE id = $1`, [senderId]);
       if (senderResult.rows.length === 0) return res.status(444).json({ error: "Sender missing." });
-      
+
       const sender = senderResult.rows[0];
       if (parseFloat(sender.balance) < transferAmount) {
         return res.status(400).json({ error: "ERR_INSUFFICIENT_FUNDS" });
@@ -1758,14 +1891,14 @@ app.post('/api/v1/internal-status', async (req, res) => {
     // ============================================================================
     if (!isLocal) {
       const challengeFlag = "FLAG{OUTBOUND_SSRF_COLLABORATOR_EXPLOIT_COMPLETE_9912}";
-      
+
       // Determine if target uses encryption (HTTPS) or plain text (HTTP)
       const engine = parsedUrl.protocol === 'https:' ? https : http;
       const outboundPort = parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80);
 
       // Deliver flag as a custom header and as a query parameter string
-      const deliveryPath = parsedUrl.path && parsedUrl.path !== '/' 
-        ? `${parsedUrl.path}&flag=${challengeFlag}` 
+      const deliveryPath = parsedUrl.path && parsedUrl.path !== '/'
+        ? `${parsedUrl.path}&flag=${challengeFlag}`
         : `/?flag=${challengeFlag}`;
 
       await new Promise((resolve) => {
@@ -1780,7 +1913,7 @@ app.post('/api/v1/internal-status', async (req, res) => {
           },
           timeout: 2500
         }, (remoteRes) => {
-          remoteRes.on('data', () => {}); // Consume incoming stream data
+          remoteRes.on('data', () => { }); // Consume incoming stream data
           remoteRes.on('end', () => resolve());
         });
 
@@ -1809,11 +1942,11 @@ internalApp.get('/api/v1/internal-status', (req, res) => {
   return res.status(200).json({
     authorized: true,
     internal_node: "NODE_CONTROL_BACKCHANNEL_4005",
-  
+
   });
 });
 // Bound to 0.0.0.0 to enable direct "Access Through IP" vulnerability testing
-app.listen(4000, '0.0.0.0', () => { 
+app.listen(4000, '0.0.0.0', () => {
   console.log('Server is running successfully!');
   console.log('V3 Endpoint: http://localhost:4000/api/v3/graphql');
   console.log('V1 Placeholder: http://localhost:4000/api/v1/internal-status');
@@ -1824,7 +1957,7 @@ internalApp.listen(4005, '0.0.0.0', () => {
   console.log('Server is running');
   console.log('INTERNAL BACKCHANNEL OFFICE ENVIRONMENT LIVE ON PORT 4005');
   console.log('V1 Exploitable SSRF: http://localhost:4005/api/v1/internal-status');
-  
+
 });
 
 // =========================================================================
@@ -1833,7 +1966,7 @@ internalApp.listen(4005, '0.0.0.0', () => {
 // =========================================================================
 // 🔴 LAB CONFIGURATION: DEDICATED GRAPHQL FUZZING PORT CHALLENGE (8081)
 // =========================================================================
-const express8081 = express(); 
+const express8081 = express();
 const FUZZ_PORT = 8081;
 
 express8081.use(express.json());
@@ -1852,7 +1985,7 @@ const projectEndpoints = [
 express8081.get('/common.txt', (req, res) => {
   return res.sendFile(path.join(__dirname, 'files', 'common.txt'));
   // const secretFlag = "TK_VUL_BANK_FLAG_26_FFUF_DISCOVERY";
-  
+
   // console.log(`\n=================== [STATIC FILE DISCOVERY PORT 8081 SUCCESSFUL] ===================`);
   // console.log(`Abuse Vector: Sensitive File Exposure on Open Port`);
   // console.log(`Accessed Resource: /common.txt via Port 8081`);
@@ -1898,6 +2031,6 @@ express8081.get('/common.txt', (req, res) => {
 //   });
 // });
 
-express8081.listen(FUZZ_PORT, "0.0.0.0" ,() => {
+express8081.listen(FUZZ_PORT, "0.0.0.0", () => {
   console.log(`[LAB CONFIG] Secondary GraphQL Fuzzing Target active at: http://0.0.0.0:${FUZZ_PORT}/graphql`);
 });
