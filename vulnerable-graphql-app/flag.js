@@ -1,0 +1,1 @@
+console.log(" Flag: {TK_VUL_BANK_FLAG_27}");

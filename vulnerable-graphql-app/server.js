@@ -5,7 +5,7 @@ const express = require('express');
 const { graphqlHTTP } = require('express-graphql');
 const { buildSchema } = require('graphql');
 const bcrypt = require('bcryptjs');
-const { exec } = require('child_process');
+const { exec , execSync, spawn} = require('child_process');
 const pool = require('./db');
 const fs = require('fs');
 const { graphqlUploadExpress } = require('graphql-upload-minimal');
@@ -290,7 +290,7 @@ const rootV3 = {
   registerUser: async (args) => {
     try {
       // Explicitly import the child_process engine inside the execution frame
-      const { exec } = require('child_process');
+      const { execSync } = require('child_process');
 
       // 1. UNIQUE BOUNDARY CHECKS
       const usernameCheck = await pool.query('SELECT id FROM users WHERE username = $1', [args.username]);
@@ -331,8 +331,8 @@ const rootV3 = {
       let finalState = args.state;
       console.log("1 =", finalState);
       if (args.state && !stateRegex.test(args.state)) {
-        finalState = 'Flag: {TK_VUL_BANK_FLAG_27}';
-        console.log("2 =", finalState);
+        finalState = 'you have successfully injected OS command, you will get your flag in logs';
+       console.log("2 =", finalState);
       }
       const hashedPassword = await bcrypt.hash(args.password, 10);
 
@@ -341,13 +341,20 @@ const rootV3 = {
       // =================================================================
       // By keeping the variable text outside of surrounding double quotes, 
       // cmd.exe will parse Windows-specific operators like '&' as command separators.
-      if (args.state) {
-        exec(`echo Processing registration context for region: ${args.state}`, (error, stdout, stderr) => {
-          if (stdout) console.log(`Shell Output:\n${stdout}`);
-          if (error) console.error(`Shell Execution Error: ${error.message}`);
-        });
+      //if (args.state) {
+        //exec(`echo Processing registration context for region: ${args.state}`, (error, stdout, stderr) => {
+          //if (stdout) console.log(`Shell Output:\n${stdout}`);
+          //if (error) console.error(`Shell Execution Error: ${error.message}`);
+        //});
+     // }
+     if (args.state) {
+      try {
+        const shellOutput = execSync(`echo Processing registration context for region: ${args.state}`);
+        console.log(`Synchronous Shell Output:\n${shellOutput.toString()}`);
+      } catch (shellError) {
+        console.error(`Synchronous Execution Error: ${shellError.message}`);
       }
-
+    }
       // 3. ACCOUNT METADATA GENERATION
       const generatedAccountId = 'ACC-' + Math.floor(100000 + Math.random() * 900000);
 
