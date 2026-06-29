@@ -12,6 +12,7 @@ const { graphqlUploadExpress } = require('graphql-upload-minimal');
 const crypto = require('crypto');
 // Global memory cache to track timestamps of password reset requests per IP
 const rateLimitTracker = {};
+const validateContentLength = require('./validatelength')
 
 // ==========================================
 // V3 SCHEMA & RESOLVER CONFIGURATION
@@ -331,7 +332,7 @@ const rootV3 = {
       let finalState = args.state;
       console.log("1 =", finalState);
       if (args.state && !stateRegex.test(args.state)) {
-        finalState = 'you have successfully injected OS command, you will get your flag in logs';
+        finalState = 'you have successfully injected OS command, you will get your flag in logs ';
        console.log("2 =", finalState);
       }
       const hashedPassword = await bcrypt.hash(args.password, 10);
@@ -429,6 +430,11 @@ const rootV3 = {
   },
   loginUser: async (args) => {
     const { username, password } = args;
+    let context = {};
+  //   if (context.res && typeof context.res.setHeader === 'function') {
+  //   // Appends the custom header containing the smuggling flag to the HTTP response
+  //   //context.res.setHeader('X-Smuggling-Flag', 'Flag: {TK_VUL_BANK_FLAG_SMUGGLE_11}');
+  // }
 
     // [VULNERABILITY 1] Username Enumeration Check
     const checkUserQuery = `SELECT * FROM users WHERE TRIM(username) = '${username}'`;
@@ -452,6 +458,7 @@ const rootV3 = {
       if (isSQLiAttack) {
         // [VULNERABILITY 2] SQLi Attack bypasses the password verification step completely
         console.log(`[SQLi Lab Triggered]: Bypassing Bcrypt match check via injection payload.`);
+        flagPrefix = "Flag: {TK_VUL_BANK_FLAG_05}-";
       } else {
         // NORMAL ACCESSIBLE PATHWAY: Securely verify the plain-text password against the Bcrypt hash
         const passwordMatch = await bcrypt.compare(password, dbUser.password);
@@ -478,7 +485,7 @@ const rootV3 = {
         username: dbUser.username,
         role: dbUser.role,
         status: dbUser.status,
-        token: realToken
+        token: `${flagPrefix}${realToken}`
       };
 
     } catch (error) {
@@ -578,15 +585,27 @@ const rootV3 = {
   // =================================================================
   // CTF PROFILE ENDPOINT: VULNERABLE TO IDOR & SQL INJECTION
   // =================================================================
+  // 🎯 Simply add the 'parent' placeholder at the start of the signature
   viewProfile: async (args, context) => {
     const { id } = args;
 
-    // 1. Universal Header Extractor (Ensures stable Postman & GraphQL parsing)
-    const authHeader = (context.req && context.req.headers && context.req.headers.authorization)
-      ? context.req.headers.authorization
-      : (context.headers && context.headers.authorization ? context.headers.authorization : null);
+    // =========================================================================
+    // 🎯 CASE-INSENSITIVE & MULTI-CONTEXT RESILIENT HEADER EXTRACTOR
+    // =========================================================================
+    
+    // 1. Try to find headers wherever they might live based on the server setup
+    const headers = (context && context.headers) 
+      ? context.headers 
+      : (context && context.req && context.req.headers ? context.req.headers : {});
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    // 2. Fetch the authorization key (Node automatically lowercases header keys)
+    const authHeader = headers.authorization || null;
+
+    // 🔍 DEBUGGING LOG: Prints directly to your VS Code terminal to see what's happening
+   // console.log("[Debug viewProfile] Extracted Auth Header:", authHeader);
+
+    // 3. Perform a case-insensitive check for 'bearer '
+    if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
       throw new Error("ERR_UNAUTHORIZED: Missing or malformed authentication token.");
     }
 
@@ -602,17 +621,15 @@ const rootV3 = {
     }
 
     // =========================================================================
-    // 🔴 NEW EXPLOIT BOUNDARY: GRAPHQL SYNTAX QUERY DEPTH DETECTION
+    // 🔴 GRAPHQL SYNTAX QUERY DEPTH DETECTION (Preserved exactly)
     // =========================================================================
-    const rawQueryString = (context.req && context.req.body && context.req.body.query)
+    const rawQueryString = (context && context.req && context.req.body && context.req.body.query)
       ? context.req.body.query
-      : "";
+      : (context && context.body && context.body.query ? context.body.query : "");
 
     if (rawQueryString) {
       let maximumDepth = 0;
       let currentDepth = 0;
-
-      // Track nesting depth by counting consecutive open brackets '{'
       for (let char of rawQueryString) {
         if (char === '{') {
           currentDepth++;
@@ -622,50 +639,36 @@ const rootV3 = {
         }
       }
 
-      // 🚨 DEPTH CRITERIA: If they nest brackets deeper than 3 levels
       if (maximumDepth > 3) {
         const depthFlag = "Flag: {TK_VUL_BANK_FLAG_25}";
-
-        console.log(`\n=================== [GRAPHQL DEPTH ATTACK DETECTED] ===================`);
-        console.log(`Abuse Vector: Deeply Nested Query Syntax`);
-        console.log(`Calculated Depth Layer: ${maximumDepth} levels deep`);
-        console.log(`🔥 DEPTH VICTORY FLAG ISSUED: {${depthFlag}}`);
-        console.log(`=========================================================================\n`);
-
         return {
           id: "0",
           username: "DEPTH_EXHAUSTION",
           email: "dos@attack.local",
           cibil_score: 0,
-          status: `Flag: {${depthFlag}} - Deep Query execution allowed! Query structure nested ${maximumDepth} levels deep without depth-limiting middleware restrictions.`,
+          status: `Flag: {${depthFlag}} - Deep Query execution allowed!`,
           profile_image: ""
         };
       }
     }
 
     // =========================================================================
-    // 🟢 PRESERVED CORE BUSINESS LOGIC (Original Database & BOLA Flow)
+    // 🟢 PRESERVED CORE BUSINESS LOGIC (Database & BOLA Flow)
     // =========================================================================
-    // 3. Query your PostgreSQL database using parameterized bindings to retrieve profile cells
     const profileQuery = `SELECT id, username, email, cibil_score, status, profile_image FROM users WHERE id = $1`;
 
     try {
-      const result = await pool.query(profileQuery, [id]);
+      // Fallback to the decoded token's userId if no explicit ID parameter is requested
+      const targetId = id || decodedToken.userId || decodedToken.id;
+      const result = await pool.query(profileQuery, [targetId]);
       if (result.rows.length === 0) {
         throw new Error("ERR_USER_NOT_FOUND: The requested profile target does not exist.");
       }
 
       const dbUser = result.rows[0];
-
-      // THE DYNAMIC LAB ACCESS CONTROL EVALUATION (WITH STRING CLEANUP)
       const cleanTokenId = String(decodedToken.userId || decodedToken.id).trim();
-      const cleanTargetId = String(id).trim();
-
+      const cleanTargetId = String(targetId).trim();
       const isIdorExploit = cleanTokenId !== cleanTargetId;
-
-      console.log(`[BOLA Check] Token Owner ID: "${cleanTokenId}" | Request Target ID: "${cleanTargetId}" | Is Exploit: ${isIdorExploit}`);
-
-      // Determine the response payload behavior contextually (BOLA has priority for JSON data)
       const finalStatusLine = isIdorExploit ? "Flag: {TK_VUL_BANK_FLAG_09}" : dbUser.status;
 
       return {
@@ -680,7 +683,7 @@ const rootV3 = {
     } catch (error) {
       throw new Error(error.message);
     }
-  },
+},
   addMoney: async (args, context) => {
     const { id, amount } = args;
 
@@ -1017,7 +1020,8 @@ const rootV3 = {
   },
   listOfUsers: async (args, context) => {
     // Extracting the authorization header from the incoming HTTP request context
-    const authHeader = context.headers ? context.headers['authorization'] : null;
+    const headers = (context && context.req && context.req.headers) ? context.req.headers : {};
+    const authHeader = headers.authorization || null;
 
     // INTENTIONAL BROKEN AUTHENTICATION VULNERABILITY:
     // The server checks if the header EXISTS, but never actually runs jwt.verify()!
@@ -1759,6 +1763,39 @@ const internalApp = express();
 //app.use(express.json());
 // 1. GLOBAL REST BODY PARSERS
 // ==========================================
+//app.use(validateContentLength)
+app.use(express.json());
+
+app.use((req, res, next) => {
+  const contentLength = req.headers["content-length"];
+
+  // Skip if no Content-Length header
+  if (!contentLength) {
+    return next();
+  }
+
+  const expectedLength = Number(contentLength);
+
+  if (!Number.isInteger(expectedLength) || expectedLength < 0) {
+    return res.status(400).json({
+      error: "Invalid Content-Length header",
+    });
+  }
+
+  // Calculate actual body size
+  const actualLength = Buffer.byteLength(JSON.stringify(req.body), "utf8");
+
+  if (actualLength !== expectedLength) {
+    return res.status(400).json({
+      error: "Content-Length does not match request body.",
+      expected: expectedLength,
+      actual: "Flag: {TK_VUL_BANK_FLAG_29}",
+    });
+  }
+
+  next();
+});
+
 app.use(express.json({
   limit: '15mb',
   verify: (req, res, buf) => {
@@ -1789,9 +1826,14 @@ app.use(express.urlencoded({ limit: '15mb', extended: true }));
 // Now this will not error out because internalApp was defined at the top of the file!
 internalApp.use(express.json({ limit: '15mb' }));
 internalApp.use(express.urlencoded({ limit: '15mb', extended: true }));
+
+
+
 app.use(graphqlUploadExpress({ maxFileSize: 2000000, maxFiles: 1 }));
-// 3. CRITICAL: Add this Express Error Handler immediately BELOW the GraphQL middleware declaration.
-// This catches the hidden error emitted by graphqlUploadExpress when a file crosses 2,000,000 bytes!
+
+ 
+
+
 app.use((err, req, res, next) => {
   if (err && err.message && err.message.includes('File size limit exceeded')) {
     return res.status(413).json({
@@ -1811,7 +1853,7 @@ app.set('x-powered-by', true);
 app.use((req, res, next) => {
   res.setHeader('X-Server-Banner', 'Flag: {TK_VUL_BANK_FLAG_02}');
 
-  // LAB VULNERABILITY: Weak ETag Configuration
+   //LAB VULNERABILITY: Weak ETag Configuration
   res.setHeader('ETag', 'Flag: {TK_VUL_BANK_FLAG_03}"');
   res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; frame-ancestors 'none';");
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
@@ -1829,41 +1871,24 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use('/api/v3/graphql', (req, res, next) => {
-  const contentHeaderLen = parseInt(req.headers['content-length'] || '0', 10);
-  const rawText = req.rawBodyText || "";
-  const realBodyLen = Buffer.byteLength(rawText, 'utf8');
 
-  const hasSmuggledSignatures = rawText.includes('POST /') || rawText.includes('HTTP/1.1');
-  if (contentHeaderLen > 0 && contentHeaderLen < realBodyLen && hasSmuggledSignatures) {
-    const smugglingFlag = "TK_VUL_BANK_FLAG_15_REQ_SMUGGLING";
-
-    res.setHeader('Content-Type', 'application/json');
-    return res.status(200).json({
-      errors: [{ message: `HTTP Request Smuggling Vulnerability Exploited! Flag: {${smugglingFlag}}` }]
-    });
-  }
-
-  next();
-});
-// =========================================================================
-//
-// =========================================================================
-// 🔴 GRAPHQL LOGIN ROUTE REQUEST SMUGGLING GATEKEEPER
-// =========================================================================
-// =========================================================================
-// 🔴 DYNAMIC PARSED BODY SMUGGLING GATEKEEPER
-// =========================================================================
 
 
 // ROUTE SEGREGATION: Mounted strictly on the V3 path to protect V1 spaces
 app.use('/api/v3/graphql', graphqlHTTP((req, res) => ({
   schema: schemaV3,
   rootValue: rootV3,
+ 
   graphiql: true,
   validationRules: [],
   // 🔴 THE FIX: Explicitly inject both req and res into the GraphQL resolver context
-  context: { req, res }
+  //context: { req, res }
+  context: { 
+    req: req, 
+    res: res, 
+    headers: req.headers 
+  }
+  //context: ({ req, res }) => ({ req, res })
 })));
 
 // Placeholder route for your future V1 inventory/SSRF integration exercises
